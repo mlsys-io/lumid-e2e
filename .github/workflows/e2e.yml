@@ -1,0 +1,74 @@
+name: e2e
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+    branches: [main, master, dev]
+  schedule:
+    # Nightly 04:00 UTC — full suite on both browsers
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  playwright:
+    # PR runs: chromium only, skip OAuth (already skipped), skip TC14.
+    # Nightly: both browsers.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASE_URL: https://lum.id
+      E2E_GMAIL_USER: ${{ secrets.E2E_GMAIL_USER }}
+      E2E_GMAIL_APP_PASSWORD: ${{ secrets.E2E_GMAIL_APP_PASSWORD }}
+      E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      E2E_INVITATION_CODE: ${{ secrets.E2E_INVITATION_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            npx playwright install --with-deps chromium firefox
+          else
+            npx playwright install --with-deps chromium
+          fi
+      - name: Run tests
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            npx playwright test
+          else
+            npx playwright test --project=chromium
+          fi
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 7
+
+  cli-lifecycle:
+    # TC14 runs docker-in-docker. Nightly only, not on every PR.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CI_E2E_DOCKER: "1"
+      LUMID_IDENTITY_URL: https://lum.id
+      LUMID_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+      LUMID_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: mlsys-io/LumidOS
+          path: LumidOS
+          token: ${{ secrets.LUMIDOS_CHECKOUT_TOKEN }}
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install requests
+      - run: python3 LumidOS/tests/integration/test_case_14_install_lifecycle.py

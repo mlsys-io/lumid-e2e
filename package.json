@@ -1,0 +1,26 @@
+{
+  "name": "lumid-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end user-perspective auth tests for lum.id + LumidOS",
+  "scripts": {
+    "test": "playwright test",
+    "test:chromium": "playwright test --project=chromium",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "codegen": "playwright codegen https://lum.id",
+    "install-browsers": "playwright install --with-deps chromium firefox",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^22.10.0",
+    "dotenv": "^16.4.7",
+    "imapflow": "^1.0.186",
+    "mailparser": "^3.7.2",
+    "@types/mailparser": "^3.4.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
