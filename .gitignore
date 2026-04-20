@@ -1,8 +1,12 @@
+# Editor swap files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node
 node_modules/
+
+# Playwright
 test-results/
 playwright-report/
-playwright/.cache/
-.env.local
-.auth/
-dist/
-.DS_Store

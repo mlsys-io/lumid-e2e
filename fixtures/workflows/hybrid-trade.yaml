@@ -1,0 +1,94 @@
+apiVersion: mloc/v1
+kind: InferenceTask
+metadata:
+  name: e2e-hybrid-trade
+  owner: luyao
+  annotations:
+    schedule_hint:
+      node_execution_order:
+        - generate_signal
+        - execute_trade
+      selected_worker:
+        selected:
+          generate_signal: [wkr-3]
+spec:
+  taskType: inference
+  resources:
+    replicas: 1
+    hardware:
+      cpu: 8
+      memory: "16Gi"
+  graph:
+    nodes:
+      - name: generate_signal
+        spec:
+          taskType: inference
+          data:
+            type: graph_template
+            template:
+              name: format
+              columns:
+                - label: input_prompt
+                  data:
+                    type: list
+                    items:
+                      - "DOGEUSD up 2% today. Decision?"
+              options:
+                format:
+                  steps:
+                    - label: format_step
+                      template: '{ref0}'
+                      arguments:
+                        - label: ref0
+                          value: input_prompt
+                  messages:
+                    - role: system
+                      content: "Reply with exactly one word: BUY or SELL."
+                    - role: user
+                      content: format_step
+          model:
+            source:
+              type: huggingface
+              identifier: Qwen/Qwen2.5-1.5B-Instruct
+              revision: main
+            vllm:
+              max_num_batched_tokens: 2048
+              gpu_memory_utilization: 0.9
+              trust_remote_code: true
+          inference:
+            temperature: 0.7
+            max_tokens: 4
+          resources:
+            hardware:
+              cpu: 8
+              memory: "16Gi"
+              gpu:
+                type: any
+                count: 1
+                memory: "8Gi"
+      - name: execute_trade
+        dependsOn: [generate_signal]
+        spec:
+          taskType: api
+          api:
+            url: "https://lumid.market/trading/api/custom/trading/order"
+            method: POST
+            headers:
+              X-API-Token: "Bearer __QA_API_TOKEN__"
+              Content-Type: application/json
+            json:
+              symbol: "DOGEUSD"
+              direction: "Buy"
+              volume: 5
+            timeout_sec: 30
+            response:
+              parse_json: false
+              return_body: true
+              raise_for_status: true
+  output:
+    destination:
+      type: http
+      timeoutSec: 3600
+    artifacts:
+      - responses.json
+      - logs
