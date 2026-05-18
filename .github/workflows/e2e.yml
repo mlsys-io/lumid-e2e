@@ -52,6 +52,41 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
+  playwright-lqt:
+    # LQT persona specs — gated on LUMID_E2E_LQT_GATEWAY_URL being set.
+    # Off by default so the existing playwright job keeps green on runners
+    # that can't reach the LQT gateway.
+    if: vars.LUMID_E2E_LQT_GATEWAY_URL != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASE_URL: https://lum.id
+      LUMID_E2E_LQT: "1"
+      LUMID_E2E_LQT_GATEWAY_URL: ${{ vars.LUMID_E2E_LQT_GATEWAY_URL }}
+      E2E_GMAIL_USER: ${{ secrets.E2E_GMAIL_USER }}
+      E2E_GMAIL_APP_PASSWORD: ${{ secrets.E2E_GMAIL_APP_PASSWORD }}
+      E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      E2E_INVITATION_CODE: ${{ secrets.E2E_INVITATION_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run LQT persona tests
+        run: npx playwright test tests/lqt-*.spec.ts --project=chromium
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-lqt-report-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 7
+
   cli-lifecycle:
     # TC14 runs docker-in-docker. Nightly only, not on every PR.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
