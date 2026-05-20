@@ -19,7 +19,6 @@ The lumid ecosystem has mature REST-level tests (TC10 PAT lifecycle, TC11 unifie
 | 7 | Admin → `/account/admin/runmesh/users` → sees real list via SSO bridge | `tests/07-admin-runmesh-sso.spec.ts` |
 | 8 | Fresh `curl lum.id/start \| bash` → `lumid trading status` works | `cli/test_case_14_install_lifecycle.py` |
 | 9 | Installed CLI with revoked PAT → clean error | `cli/test_case_14_install_lifecycle.py` step 4 |
-| 9b | **N fresh users in parallel** → PAT mint → exercise `kv.run:5000` → verify auth, rate-limit, isolation, revocation | `tests/09-fresh-users.spec.ts` |
 
 ## Setup (one-time)
 
