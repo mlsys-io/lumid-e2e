@@ -1,5 +1,6 @@
 import { request, type APIRequestContext } from "@playwright/test";
 import { taggedAddress, waitForEmail, extractOtp } from "./mailbox";
+import { localOtpEnabled, readOtpFromRedis } from "./otp-redis";
 
 // Provisions a fresh test user via the REST API. Used by specs that
 // need a brand-new account (e.g. login spec, logout spec, password-
@@ -30,10 +31,18 @@ function rand(): string {
  */
 export async function createUser(
 	baseURL: string,
-	opts: { tag?: string; password?: string; username?: string } = {},
+	opts: { tag?: string; password?: string; username?: string; invitationCode?: string } = {},
 ): Promise<TestUser> {
 	const tag = opts.tag || `signup-${rand()}`;
-	const email = taggedAddress(tag);
+	// CI_E2E_LOCAL_OTP=1 takes the Redis backdoor path — uses a synthetic
+	// non-Gmail address (no delivery needed) and reads the OTP straight
+	// out of identity's Redis. Useful for local validation without
+	// holding a Gmail app password. Default path (mailbox) still wins in
+	// CI so the email round-trip stays under test.
+	const useLocalOtp = localOtpEnabled();
+	const email = useLocalOtp
+		? `lumid-e2e-${tag}@yao.lu`
+		: taggedAddress(tag);
 	const password = opts.password || `Lumid-e2e-${rand()}!`;
 	const username = opts.username || `e2e-${tag}`;
 
@@ -48,17 +57,25 @@ export async function createUser(
 			throw new Error(`send-verification-code ${otpReq.status()}: ${await otpReq.text()}`);
 		}
 
-		// 2. Poll Gmail for the code
-		const mail = await waitForEmail(email, { timeoutMs: 120_000 });
-		const code = extractOtp(mail.html, mail.text);
+		// 2. Read OTP — either from Redis (local backdoor) or from Gmail.
+		let code: string;
+		if (useLocalOtp) {
+			code = await readOtpFromRedis(email, { timeoutMs: 30_000 });
+		} else {
+			const mail = await waitForEmail(email, { timeoutMs: 120_000 });
+			code = extractOtp(mail.html, mail.text);
+		}
 
-		// 3. Register
+		// 3. Register. Invitation code (optional) lets specs that need
+		//    a user with a redeemed code pass it inline rather than
+		//    walking the /auth/redeem-invite UI after the fact.
 		const reg = await api.post("/api/v1/register", {
 			data: {
 				email,
 				password,
 				name: username,
 				verification_code: code,
+				...(opts.invitationCode ? { invitation_code: opts.invitationCode } : {}),
 			},
 			headers: { "Content-Type": "application/json" },
 		});
