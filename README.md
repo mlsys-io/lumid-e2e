@@ -64,7 +64,7 @@ npm run test:debug
 BASE_URL=http://localhost:13080 npm test
 ```
 
-Assumes lumid-identity + lumid_front + lumid_auth_ui are running locally and the nginx proxy on :13080 is up.
+Assumes lumid-identity + lumid_landing_readdy + lumid_ui are running locally and the nginx proxy on :13080 is up.
 
 ## CI
 
