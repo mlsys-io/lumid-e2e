@@ -30,8 +30,11 @@ export async function loginAsAdmin(page: Page): Promise<void> {
 	await page.getByLabel(/email/i).fill(email);
 	await page.getByLabel(/password/i, { exact: false }).first().fill(password);
 	await page.getByRole("button", { name: /sign in/i }).click();
-	// Landing URL is /account — wait for it to settle.
-	await page.waitForURL(/\/account(\/|$)/, { timeout: 15_000 });
+	// Landing URL depends on role: admins → /dashboard, regular users
+	// → /studio/today (post-S5 cutover). Accept either + the old
+	// /account/* path for backward-compat. Whatever lands, the cookie
+	// is set and bearer requests work.
+	await page.waitForURL(/\/dashboard|\/studio|\/account(\/|$)/, { timeout: 15_000 });
 }
 
 /**
