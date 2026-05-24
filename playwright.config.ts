@@ -13,12 +13,22 @@ dotenv.config({ path: ".env", override: false });
 // local docker-compose stack.
 const BASE_URL = process.env.BASE_URL || "https://lum.id";
 
+// Workers normally stay at 1 because the auth specs share the OTP
+// mailbox + the admin seed user. The long auto-quant spec opts into
+// parallel-mode via `test.describe.configure({ mode: 'parallel' })`,
+// and CI_E2E_LONG=1 lifts the global worker cap to match. Default
+// (5) matches the plan; override via CI_E2E_LONG_USERS.
+const LONG_MODE = process.env.CI_E2E_LONG === "1";
+const WORKER_CAP = LONG_MODE
+	? Number.parseInt(process.env.CI_E2E_LONG_USERS || "5", 10)
+	: 1;
+
 export default defineConfig({
 	testDir: "./tests",
 	fullyParallel: false, // auth tests share email mailbox + admin seed
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 2 : 0,
-	workers: 1, // serial — shared mailbox + admin session
+	workers: WORKER_CAP,
 	reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
 	timeout: 60_000,
 	expect: { timeout: 10_000 },
@@ -27,7 +37,7 @@ export default defineConfig({
 		baseURL: BASE_URL,
 		trace: "on-first-retry",
 		screenshot: "only-on-failure",
-		video: "retain-on-failure",
+		video: "off",
 		actionTimeout: 15_000,
 		navigationTimeout: 30_000,
 	},
