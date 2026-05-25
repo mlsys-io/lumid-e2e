@@ -10,3 +10,9 @@ node_modules/
 # Playwright
 test-results/
 playwright-report/
+
+# Local secrets — Gmail IMAP creds, admin password, invitation codes, etc.
+.env.local
+
+# Ad-hoc dashboard scan artifacts
+dashboard_scan_report.json
