@@ -37,12 +37,12 @@ test.describe("14 — workflow surface (W1)", () => {
 		// Lens tabs present.
 		await expect(page.getByRole("button", { name: "Live" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "All" })).toBeVisible();
-		// At least one row.
-		const tableRows = page.locator("table tbody tr");
-		await expect.poll(async () => await tableRows.count(), { timeout: 10_000 }).toBeGreaterThan(0);
-		// Each row has a kind chip ("scheduled" or "visual").
-		const firstChip = tableRows.first().locator("text=/scheduled|visual/i");
-		await expect(firstChip).toBeVisible();
+		// At least one kind chip rendered (workflows list renders as a
+		// card-list, not a table — checking for the data-testid covers
+		// both pre- and post-W5 polish layouts and avoids matching the
+		// hidden filter <option> elements that also use these words).
+		const chip = page.locator('[data-testid^="kind-chip-"]').first();
+		await expect(chip).toBeVisible({ timeout: 10_000 });
 	});
 
 	test("workflow detail has Graph + Runs + Definition tabs", async ({ page }) => {
