@@ -35,7 +35,7 @@ test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 	});
 
 	test('"+ New workflow" surfaces a template grid', async ({ page }) => {
-		await page.goto("/studio/workflows");
+		await page.goto("/studio/apps");
 		await page.getByRole("button", { name: /New workflow/i }).first().click();
 
 		// Composer modal opens with the templates visible above the
@@ -50,11 +50,11 @@ test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 		await expect(textarea).toHaveValue(/morning|summarize/i, { timeout: 5_000 });
 	});
 
-	test("/studio/workflows?compose=1 deep-links to the composer", async ({ page }) => {
+	test("/studio/workflows?compose=1 deep-links to the composer (via Home)", async ({ page }) => {
 		await page.goto("/studio/workflows?compose=1");
 		await expect(page.getByText(/Start with a template/i)).toBeVisible({ timeout: 10_000 });
-		// Query param is stripped so back/forward doesn't re-pop.
-		await expect(page).toHaveURL(/\/studio\/workflows$/);
+		// Redirect preserved the query, the composer host stripped it.
+		await expect(page).toHaveURL(/\/studio\/apps$/);
 	});
 
 	test("/studio/inbox empty state shows inviting CTA, not raw italics", async ({ page }) => {

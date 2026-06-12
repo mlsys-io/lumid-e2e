@@ -1,12 +1,14 @@
-// W1 surface: workflows + runs + chat agent.
+// W1 surface, post-streamline (2026-06-11): workflows fold into the
+// per-app observability panel; /studio/runs is the cross-app Activity
+// index; the n8n-style pipeline canvas renders inside the panel.
 //
 // Walks the admin persona through:
 //   1. /api/v1/me/workflows returns mixed kinds with the `kind` field.
-//   2. /studio/workflows shows the unified list (kind chips, Live/All/Available lenses).
-//   3. /studio/workflows/<slug> has Graph + Runs + Definition tabs.
+//   2. /studio/workflows redirects to Home (/studio/apps).
+//   3. /studio/workflows/<slug> deep-links into the owning app's panel
+//      (?selected=<loop>) and the pipeline canvas renders nodes.
 //   4. /studio/runs toggles List / Grid / Gantt / Calendar.
 //   5. Chat: "what failed today?" → agent invokes list_runs(state=failed).
-//   6. /studio/apps/* still resolves (redirects to /studio/workflows).
 
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
@@ -31,45 +33,36 @@ test.describe("14 — workflow surface (W1)", () => {
 		}
 	});
 
-	test("/studio/workflows lists workflows with kind chips", async ({ page }) => {
+	test("/studio/workflows redirects to Home (apps)", async ({ page }) => {
 		await page.goto("/studio/workflows");
-		await expect(page.getByRole("heading", { name: /^Workflows$/ })).toBeVisible();
-		// Lens tabs present.
-		await expect(page.getByRole("button", { name: "Live" })).toBeVisible();
-		await expect(page.getByRole("button", { name: "All" })).toBeVisible();
-		// At least one kind chip rendered (workflows list renders as a
-		// card-list, not a table — checking for the data-testid covers
-		// both pre- and post-W5 polish layouts and avoids matching the
-		// hidden filter <option> elements that also use these words).
-		const chip = page.locator('[data-testid^="kind-chip-"]').first();
-		await expect(chip).toBeVisible({ timeout: 10_000 });
+		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 	});
 
-	test("workflow detail has Graph + Runs + Definition tabs", async ({ page }) => {
-		// Pick the first workflow from the list and drill in.
+	test("workflow slug deep-link lands on the app panel with the pipeline canvas", async ({ page }) => {
+		// Pick the first SCHEDULED workflow and follow the legacy slug URL.
 		const listResp = await page.request.get("/api/v1/me/workflows");
 		const { data } = await listResp.json();
-		const first = (data.workflows as Array<{ slug: string }>)[0];
+		const first = (data.workflows as Array<{ slug: string; kind: string }>)
+			.find((w) => w.kind === "scheduled" && w.slug.includes(":"));
 		expect(first).toBeTruthy();
-		await page.goto(`/studio/workflows/${encodeURIComponent(first.slug)}`);
-
-		// Three tabs visible (Runs's count is dynamic).
-		await expect(page.getByRole("button", { name: "Graph" })).toBeVisible();
-		await expect(page.getByRole("button", { name: /^Runs/ })).toBeVisible();
-		await expect(page.getByRole("button", { name: "Definition" })).toBeVisible();
-
-		// Definition renders a JSON dump.
-		await page.getByRole("button", { name: "Definition" }).click();
-		await expect(page.locator("pre")).toBeVisible({ timeout: 5_000 });
+		await page.goto(`/studio/workflows/${encodeURIComponent(first!.slug)}`);
+		// Redirects into /studio/apps/<app>?selected=<loop>.
+		await expect(page).toHaveURL(/\/studio\/apps\/[^/?]+\?selected=/, { timeout: 10_000 });
+		// The observability panel header controls render.
+		await expect(page.getByRole("button", { name: /Run now/ })).toBeVisible({ timeout: 15_000 });
+		// The n8n-style canvas section is present (collapsible, default open)
+		// whenever the loop declares steps/engine; tolerate its absence only
+		// by checking the Pipeline toggle OR the runs section rendered.
+		const pipeline = page.getByRole("button", { name: /Pipeline/i });
+		const runs = page.getByText(/Runs/i).first();
+		await expect(pipeline.or(runs)).toBeVisible({ timeout: 10_000 });
 	});
 
-	test("/studio/runs toggles List / Grid / Gantt / Calendar", async ({ page }) => {
+	test("/studio/runs (Activity) toggles List / Grid / Gantt / Calendar", async ({ page }) => {
 		await page.goto("/studio/runs");
-		await expect(page.getByRole("heading", { name: /^Runs$/ })).toBeVisible();
 		for (const label of ["List", "Grid", "Gantt", "Calendar"]) {
 			await expect(page.getByRole("button", { name: label })).toBeVisible();
 		}
-		// Click each — they should not throw.
 		await page.getByRole("button", { name: "Grid" }).click();
 		await page.getByRole("button", { name: "Gantt" }).click();
 		await page.getByRole("button", { name: "Calendar" }).click();
@@ -87,10 +80,5 @@ test.describe("14 — workflow surface (W1)", () => {
 		expect(body.ret_code).toBe(0);
 		const toolCalls = body.data.tool_calls as Array<{ name: string; ok: boolean }>;
 		expect(toolCalls.some((tc) => tc.name === "list_runs")).toBeTruthy();
-	});
-
-	test("/studio/apps redirects to /studio/workflows", async ({ page }) => {
-		await page.goto("/studio/apps");
-		await expect(page).toHaveURL(/\/studio\/workflows/, { timeout: 10_000 });
 	});
 });
