@@ -56,27 +56,19 @@ test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 		expect(body2.ret_code).not.toBe(0);
 	});
 
-	test("/studio/mind shows report cards + Advanced section toggles", async ({ page }) => {
+	test("/studio/mind redirects Home (Improve folded into the panel)", async ({ page }) => {
 		await page.goto("/studio/mind");
-		await page.waitForLoadState("networkidle");
-		await expect(page.getByRole("heading", { name: /^Mind$/ })).toBeVisible();
-		// Advanced section header is present.
-		const advBtn = page.getByRole("button", { name: /Skill comparison/i });
-		await expect(advBtn).toBeVisible();
-		// Expand it.
-		await advBtn.click();
-		// Compare selector should appear.
-		await expect(page.locator("select").first()).toBeVisible();
+		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 	});
 
-	test("composer has verified-only trust gate toggle", async ({ page }) => {
+	test("/studio/skills renders the skills inventory", async ({ page }) => {
 		await page.goto("/studio/skills");
 		await page.waitForLoadState("networkidle");
-		await expect(page.getByText(/Show unverified/i)).toBeVisible();
+		await expect(page.getByText(/Installed/i).first()).toBeVisible({ timeout: 15_000 });
 	});
 
 	test("WorkflowComposer modal — both tabs present (regression)", async ({ page }) => {
-		await page.goto("/studio/workflows");
+		await page.goto("/studio/apps");
 		await page.getByRole("button", { name: /New workflow/i }).click();
 		await expect(page.getByRole("button", { name: /Describe what you want/i })).toBeVisible();
 		await expect(page.getByRole("button", { name: /Design visually/i })).toBeVisible();

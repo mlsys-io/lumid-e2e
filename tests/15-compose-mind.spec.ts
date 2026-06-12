@@ -38,9 +38,9 @@ test.describe("15 — Create + Improve surfaces (W2-W4)", () => {
 		expect(composeCall!.result.skills_picked.length).toBeGreaterThan(0);
 	});
 
-	test("/studio/workflows has a New workflow button that opens composer", async ({ page }) => {
+	test("/studio/workflows redirects Home; New workflow opens composer", async ({ page }) => {
 		await page.goto("/studio/workflows");
-		await expect(page.getByRole("heading", { name: /^Workflows$/ })).toBeVisible();
+		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 		const newBtn = page.getByRole("button", { name: /New workflow/i });
 		await expect(newBtn).toBeVisible();
 		await newBtn.click();
@@ -50,12 +50,9 @@ test.describe("15 — Create + Improve surfaces (W2-W4)", () => {
 		await expect(page.getByRole("button", { name: /Design visually/i })).toBeVisible();
 	});
 
-	test("/studio/mind renders the Mind page", async ({ page }) => {
+	test("/studio/mind redirects Home (folded into per-workflow insights)", async ({ page }) => {
 		await page.goto("/studio/mind");
-		await expect(page.getByRole("heading", { name: /^Mind$/ })).toBeVisible();
-		// At least one report-card scaffold should render (or empty state).
-		const heading = page.getByRole("heading", { name: /^Mind$/ });
-		await expect(heading).toBeVisible();
+		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 	});
 
 	test("/api/v1/me/mind/workflow returns deltas", async ({ page }) => {
