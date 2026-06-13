@@ -1,12 +1,13 @@
-// 18 — Studio streamline (2026-06-11): consolidated IA, actionable
-// health, skills + experiments as first-class surfaces, chat backbone.
+// 18 — Studio streamline (2026-06-11) + claude-style index→chat nav
+// (2026-06-13): every nav destination is a light list whose rows open
+// the grounded chat; dense panels survive as "details →" escape hatches.
 //
-//   1. Sidebar shape: Home · Activity · Skills · Experiments · Inbox.
-//   2. NeedsAttention rail renders REAL failing loops (live fixtures:
-//      any loop with status failing on this host) with a CTA.
+//   1. Sidebar shape (claude.ai layout): Apps · Library · Jobs;
+//      /studio itself is the AI chat (greeting + composer card).
+//   2. Apps is a light index (clickable rows), not a stat-chip dashboard.
 //   3. /me/skills returns the inventory with used_by inversion.
 //   4. /me/experiments aggregates cross-app with `app` annotated.
-//   5. Activity rows for scheduled runs deep-link into the app panel.
+//   5. Opening an app row lands in the chat (/studio).
 //   6. Chat tools: loops_health + cycle_detail are callable.
 //   7. Dead routes redirect: /studio/mind, /studio/workflows.
 
@@ -18,14 +19,29 @@ test.describe("18 — studio streamline", () => {
 		await loginAsAdmin(page);
 	});
 
-	test("sidebar has the consolidated nav; Activity + Inbox live in Home's status bar", async ({ page }) => {
+	test("sidebar has the consolidated nav (Apps · Library · Jobs)", async ({ page }) => {
 		await page.goto("/studio/apps");
-		for (const label of ["Home", "Library"]) {
+		for (const label of ["Apps", "Library", "Jobs"]) {
 			await expect(page.getByRole("link", { name: new RegExp(`^${label}`) }).first()).toBeVisible({ timeout: 15_000 });
 		}
-		// Activity + Inbox are reachable via the status-bar chips instead.
-		await expect(page.getByRole("link", { name: /runs today/i }).first()).toBeVisible({ timeout: 15_000 });
-		await expect(page.getByRole("link", { name: /inbox/i }).first()).toBeVisible();
+	});
+
+	test("/studio is the AI chat — greeting + composer card", async ({ page }) => {
+		await page.goto("/studio");
+		await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening)/ })).toBeVisible({ timeout: 15_000 });
+		await expect(page.getByPlaceholder(/Ask anything/)).toBeVisible();
+	});
+
+	test("Apps is a light index whose title is 'Apps' and rows open the chat", async ({ page }) => {
+		await page.goto("/studio/apps");
+		// Serif page title, not a stat-chip hero.
+		await expect(page.getByRole("heading", { name: "Apps" })).toBeVisible({ timeout: 15_000 });
+		// First app row → grounded chat (with pref=ask it autosends and lands on /studio).
+		const row = page.getByRole("button").filter({ hasText: /healthy|failing|running|idle/ }).first();
+		if (await row.count()) {
+			await row.click();
+			await expect(page).toHaveURL(/\/studio(\?|$)/, { timeout: 10_000 });
+		}
 	});
 
 	test("library hosts marketplace/skills/experiments tabs; old routes redirect", async ({ page }) => {
@@ -36,19 +52,6 @@ test.describe("18 — studio streamline", () => {
 		for (const label of ["Marketplace", "Skills", "Experiments"]) {
 			await expect(page.getByRole("link", { name: label }).first()).toBeVisible();
 		}
-	});
-
-	test("failing loops surface in the attention rail with a CTA", async ({ page }) => {
-		// Live-fixture dependent: only asserts when the host actually has
-		// a failing/stale loop (loops_health truth), so a healthy host
-		// doesn't fail the suite.
-		const r = await page.request.get("/api/v1/me/loops/health");
-		const body = await r.json();
-		const failing = (body.data.loops as Array<{ status: string; enabled?: boolean }>)
-			.filter((l) => l.enabled !== false && (l.status === "failing" || l.status === "stale"));
-		test.skip(failing.length === 0, "no failing loops on this host right now");
-		await page.goto("/studio/apps");
-		await expect(page.getByText(/Needs attention \(\d+\)/)).toBeVisible({ timeout: 15_000 });
 	});
 
 	test("/me/skills inventory inverts skill_imports into used_by", async ({ page }) => {
@@ -100,6 +103,31 @@ test.describe("18 — studio streamline", () => {
 		expect(body.ret_code).toBe(0);
 		const toolCalls = body.data.tool_calls as Array<{ name: string; ok: boolean }>;
 		expect(toolCalls.some((tc) => tc.name === "loops_health" && tc.ok)).toBeTruthy();
+	});
+
+	test("app surfaces open in chat; ?full=1 is the escape hatch", async ({ page }) => {
+		// Opening an app surface drops into the grounded chat (deeper migration).
+		await page.goto("/studio/a/mbb-ai");
+		await expect(page).toHaveURL(/\/studio(\?|$)/, { timeout: 10_000 });
+		// The full standalone page is still reachable explicitly.
+		await page.goto("/studio/a/mbb-ai?full=1");
+		await expect(page).toHaveURL(/\/studio\/a\/mbb-ai\?full=1/, { timeout: 10_000 });
+	});
+
+	test("chat can operate apps: app_read is callable on the standard path", async ({ page }) => {
+		// Force a kv.run model so the request uses the me_agent tool path
+		// (the claude-code provider bypasses these tools).
+		const r = await page.request.post("/api/v1/me/agent/chat", {
+			data: {
+				model: "kvrun-gemma4",
+				messages: [{ role: "user", content: "Call app_read with source me://gpu-rentals and report the count. One sentence." }],
+			},
+		});
+		expect(r.ok()).toBeTruthy();
+		const body = await r.json();
+		expect(body.ret_code).toBe(0);
+		const toolCalls = body.data.tool_calls as Array<{ name: string; ok: boolean }>;
+		expect(toolCalls.some((tc) => tc.name === "app_read" && tc.ok)).toBeTruthy();
 	});
 
 	test("dead routes redirect home", async ({ page }) => {
