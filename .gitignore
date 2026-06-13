@@ -16,3 +16,7 @@ playwright-report/
 
 # Ad-hoc dashboard scan artifacts
 dashboard_scan_report.json
+
+# Local render harness output (visual review)
+render-out/
+.pat-tmp
