@@ -1,0 +1,21 @@
+import { chromium } from "playwright";
+import fs from "fs";
+const PAT = fs.readFileSync("/work/.pat-tmp","utf8").trim();
+const B="https://lum.id";
+const browser = await chromium.launch();
+const ctx = await browser.newContext();
+await ctx.route("**/*",(r)=>r.continue({headers:{...r.request().headers(),authorization:`Bearer ${PAT}`}}));
+const page = await ctx.newPage();
+const js=[]; const errs=[]; let bytes=0;
+page.on("response", async r=>{ const u=r.url(); if(u.endsWith(".js")&&u.includes("/assets/")){ js.push(u.split("/assets/")[1]); try{ const b=await r.body(); bytes+=b.length; }catch{} } });
+page.on("pageerror", e=>errs.push(String(e).slice(0,140)));
+const t0=Date.now();
+for(let i=0;i<3;i++){ try{ await page.goto(B+"/studio/library",{waitUntil:"load",timeout:30000}); break;}catch(e){ if(i===2)errs.push("goto:"+e.message.slice(0,60)); await page.waitForTimeout(1000);} }
+const loadMs=Date.now()-t0;
+await page.waitForTimeout(3000);
+const content = await page.locator("text=/marketplace|Skills|Experiments|Install|MBB|Auto-/i").count().catch(()=>0);
+const heavy = js.filter(c=>/vendor-flow|vendor-charts|vendor-markdown|vendor-emoji/.test(c)).map(c=>c.replace(/-[A-Za-z0-9_]+\.js/,'.js'));
+console.log(`load=${loadMs}ms  jsChunks=${js.length}  jsBytes=${(bytes/1024).toFixed(0)}KB  rendered=${content>0?'YES':'NO'}  errors=${errs.length}`);
+console.log("heavy:", heavy.join(", ")||"(none)");
+if(errs.length) console.log("ERR:", errs[0]);
+await browser.close();
