@@ -223,3 +223,81 @@ test.describe("@stress rate limiting is per-caller, not shared", () => {
 		).toBeLessThanOrEqual(3);
 	});
 });
+
+/**
+ * @stress
+ *
+ * Chatbox + FinData under cohort-scale concurrency.
+ *
+ * This is the one path that genuinely loads the GPU, so read the model note
+ * before touching it: the native chat loop's model id is `kvrun-gemma4`, which
+ * is a LEGACY LABEL kept on purpose (personas persist it, the UI and e2e
+ * reference it). Its displayName is "DeepSeek-V4-Flash (Lumid GPU)" and its
+ * upstreamModel is `deepseek-v4-flash` — i.e. the single GB10 pair. Reading the
+ * id and concluding "not deepseek" is a mistake that has already been made once.
+ *
+ * MEASURED 2026-08-23 against prod, and the shape is counter-intuitive:
+ *
+ *     concurrent   p50      p95      all-200
+ *          1       15.9s     —        yes
+ *          5       29.2s   33.7s      yes     <- COLD cache, not steady state
+ *         10       15.1s   19.3s      yes
+ *         20        9.8s   17.1s      yes
+ *
+ * It gets FASTER under load. Each query carries a ~18k-token tool-schema prefix
+ * and returns ~80 output tokens, so the cost is almost entirely prefill — and
+ * that prefix is IDENTICAL across users, so it sits in the GB10 prefix cache.
+ * The first round pays for it and everyone after rides it. The 5-user row above
+ * is the cold-cache round; quoting it as "2x degradation at 5 users" is exactly
+ * backwards, so always discard the first round when interpreting a run.
+ *
+ * WHAT THIS TEST IS REALLY GUARDING. The scaling depends entirely on users
+ * SHARING a prefix. Anything that makes each user's prefix unique — a per-user
+ * system prompt, tenant context injected AHEAD of the tool schemas, a
+ * personalised preamble — turns one warm cache hit into N cold prefills and
+ * takes p50 from ~10s to minutes. That regression would look like "the GPU got
+ * slower", not like the prompt change that caused it.
+ */
+test.describe("@stress chatbox findata at cohort scale", () => {
+	test.skip(!ON, "opt-in: set STRESS=1");
+	test.skip(!PAT, "needs LQT_PAT");
+	test.describe.configure({ timeout: 900_000 });
+
+	test("@stress N concurrent findata questions all answer correctly", async ({ request }) => {
+		const N = Number.parseInt(process.env.STRESS_CHAT_USERS || "20", 10);
+
+		const ask = async (i: number) => {
+			const t0 = Date.now();
+			const res = await request.post("/api/v1/me/agent/chat", {
+				headers: { Authorization: `Bearer ${PAT}`, "Content-Type": "application/json" },
+				data: {
+					messages: [
+						{ role: "user", content: `Use data_catalog to name FinData schemas. One sentence. (probe ${i})` },
+					],
+				},
+				timeout: 500_000,
+			});
+			const body = res.ok() ? await res.json().catch(() => ({})) : {};
+			const reply = String(body?.data?.reply ?? body?.reply ?? "");
+			return { ms: Date.now() - t0, status: res.status(), reply };
+		};
+
+		// Warm the shared prefix first and DISCARD it — otherwise the run
+		// measures cold prefill and reports the opposite of the truth.
+		await ask(0);
+
+		const out = await Promise.all(Array.from({ length: N }, (_, i) => ask(i + 1)));
+		report(`POST /me/agent/chat  (${N} concurrent, warm)`, out.map(({ ms, status }) => ({ ms, status })));
+
+		const nonEmpty = out.filter((r) => r.reply.trim().length > 0).length;
+		// A real answer must name schemas that actually exist in the warehouse —
+		// this is what separates "the endpoint returned 200" from "the tool ran".
+		const grounded = out.filter((r) => /prediction_markets|fundamentals|schema/i.test(r.reply)).length;
+		// eslint-disable-next-line no-console
+		console.log(`    non-empty=${nonEmpty}/${N}  grounded=${grounded}/${N}  distinct=${new Set(out.map((r) => r.reply)).size}`);
+
+		expect(out.filter((r) => r.status !== 200).length, "non-200 responses").toBe(0);
+		expect(nonEmpty, "empty replies under load").toBe(N);
+		expect(grounded, "replies that did not name real FinData schemas").toBe(N);
+	});
+});
