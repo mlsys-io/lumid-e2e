@@ -182,10 +182,19 @@ test("@smoke lum.id identity /.well-known/openid-configuration responds", async 
 	expect(body).toHaveProperty("issuer");
 });
 
-test("@smoke kv.run FlowMesh /healthz is reachable", async ({ request }) => {
-	const res = await request.get("https://kv.run:8000/flowmesh/healthz");
-	// The endpoint may require auth (401) or be healthy (200) — either is fine;
-	// what matters is it isn't a 5xx or unreachable.
+test("@smoke FlowMesh is reachable via lum.id/fm", async ({ request }) => {
+	// Was https://kv.run:8000/flowmesh/healthz until 2026-08-23. That port is
+	// RETIRED (/proj/CLAUDE.md §10: "kv.run's old :5000/:8000/:5012 are
+	// retired") and now answers ECONNREFUSED, so this test had become a
+	// permanent red — the worst kind, because a smoke suite that sits one
+	// failure deep teaches everyone to skim past the next real one.
+	//
+	// FlowMesh is now fronted at lum.id/fm, and since 2026-08-20 that path is
+	// FEDERATED through mesh-federator (cloud + home + office merged), so this
+	// covers strictly more than the single-host healthz ever did.
+	const res = await request.get("/fm/api/v1/nodes");
+	// 401 (auth required) or 200 are both fine — what matters is that something
+	// answers and it is not a 5xx.
 	expect(res.status()).toBeLessThan(500);
 });
 
