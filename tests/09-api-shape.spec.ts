@@ -61,7 +61,12 @@ test("@api-shape xp.io /api/v1/repos returns array envelope", async ({ request }
 });
 
 test("@api-shape FlowMesh /healthz returns ok", async ({ request }) => {
-	const res = await request.get("https://kv.run:8000/flowmesh/healthz");
+	// Was https://kv.run:8000/flowmesh/healthz — that host:port was retired in the
+	// UKS migration and is now unreachable (connect fails, so this test failed on
+	// every browser for reasons having nothing to do with FlowMesh). The live
+	// surface is the federated /fm/ route on the apex, which fans out to all three
+	// control planes; see CLAUDE.md "kv.run's old :5000/:8000/:5012 are retired".
+	const res = await request.get("https://lum.id/fm/healthz");
 	// 200 = healthy; 401 = up but needs auth — both are fine
 	expect(res.status()).toBeLessThan(500);
 	if (res.status() === 200) {
