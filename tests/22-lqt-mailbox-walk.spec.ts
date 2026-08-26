@@ -199,6 +199,26 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 
 	test("step 2 — install lqt-mailbox from the marketplace", async ({ page }) => {
 		await loginViaUi(page, user);
+
+		// Already installed ⇒ nothing to do. With E2E_USER_EMAIL the account is
+		// a real, reused one that very likely already has the app, and the
+		// marketplace card then renders no "Add to my account" CTA at all — the
+		// click below times out and the whole walk stops at step 2, never
+		// reaching the strategy lifecycle it exists to test. Installing is a
+		// PRECONDITION here, not the assertion; steps 4-10 are.
+		const installed = await getJson(page, "/api/v1/me/apps");
+		const apps = installed?.data?.apps ?? installed?.apps ?? [];
+		const already =
+			Array.isArray(apps) &&
+			apps.some((a: any) => (a?.name ?? a?.app) === APP);
+		if (already) {
+			test.info().annotations.push({
+				type: "precondition",
+				description: `${APP} was already installed for ${user.email} — marketplace install skipped`,
+			});
+			return;
+		}
+
 		await page.goto("/studio/library/marketplace");
 
 		const search = page.getByPlaceholder(/search/i).first();
