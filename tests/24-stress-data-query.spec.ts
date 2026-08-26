@@ -29,6 +29,12 @@ import { test, expect, request as pwrequest, type APIRequestContext } from "@pla
 const ON = process.env.STRESS === "1";
 const USERS = Number.parseInt(process.env.STRESS_USERS || "20", 10);
 const ITERS = Number.parseInt(process.env.STRESS_ITERS || "5", 10);
+// STRESS_SQL swaps in a REAL-table query. It matters: `SELECT 1` comes back
+// inline from findata and never takes the second (materialize-then-fetch) hop,
+// so it measures auth + proxy only and flatters the path. A bounded read of an
+// actual table is what a student's first query looks like.
+const SQL = process.env.STRESS_SQL || "SELECT 1 AS ok";
+const EXPECT_ROWS = Number.parseInt(process.env.STRESS_EXPECT_ROWS || "1", 10);
 
 interface Sample { ms: number; status: number; rows: number }
 
@@ -104,7 +110,7 @@ test.describe("@stress data-query under cohort concurrency", () => {
 	});
 
 	test("@stress cohort-sized concurrency stays correct and 5xx-free", async ({ request }) => {
-		const s = await hammer(request, bearer, "SELECT 1 AS ok");
+		const s = await hammer(request, bearer, SQL);
 		const { codes } = report(`POST /me/data-query  (${USERS} users x ${ITERS})`, s);
 
 		const bad = s.filter((x) => x.status >= 500 || x.status === 0).length;
@@ -117,8 +123,8 @@ test.describe("@stress data-query under cohort concurrency", () => {
 
 		// Correctness under load, not just liveness: a degraded path that returns
 		// 200 with an empty body would otherwise pass every latency assertion.
-		const wrong = s.filter((x) => x.status === 200 && x.rows !== 1).length;
-		expect(wrong, "200s that did not return exactly 1 row").toBe(0);
+		const wrong = s.filter((x) => x.status === 200 && x.rows !== EXPECT_ROWS).length;
+		expect(wrong, `200s that did not return exactly ${EXPECT_ROWS} row(s)`).toBe(0);
 	});
 
 	test("@stress the LIMIT guard still bounds under load", async ({ request }) => {
