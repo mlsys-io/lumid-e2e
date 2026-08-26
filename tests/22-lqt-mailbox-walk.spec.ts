@@ -34,14 +34,36 @@ const WALK_ENABLED = process.env.LUMID_E2E_LQT_WALK !== "0";
 // Unique per run: concurrent runs must not collide on a strategy name, and
 // the Sessions assertion must not pick up somebody else's thread.
 const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-const STRATEGY_NAME = `e2e-walk-${stamp}`;
+// Underscores, not dashes: this name is interpolated into the .lqts source
+// as the strategy IDENTIFIER, and `e2e-walk-x` parses as a subtraction.
+// `stamp` can also start with a digit, so the name is prefixed.
+const STRATEGY_NAME = `e2e_walk_${String(stamp).replace(/[^A-Za-z0-9]/g, "_")}`;
 
 // Minimal .lqts source. Compiled server-side by the mailbox consumer, so
 // nothing local is needed to produce it.
+// Real .lqts grammar — verified against the compiler 2026-08-26 by deploying
+// this exact shape and reading `core.tenant_strategies` for a program_hash.
+//
+// The previous source could NEVER compile and so this walk could never pass:
+//   strategy "name" {  symbol: "BTCUSD"
+//                      when price_change(5m) > 0.02 { propose buy size 1 } }
+// Four errors in four lines — the name must be a bare IDENTIFIER (a quoted
+// string gives `parse error: expected an identifier for the strategy name`),
+// and `symbol:`, `price_change()` and `propose buy size` are not in the
+// grammar at all. It failed invisibly because a rejected deploy leaves the
+// /xpio/strategies record at `sent` (the reject ack carries no `strategy`
+// echo, so the ingress never flips it) — the reason lives only in
+// mailbox.lqt_outbox. Model new strategies on app/strategies/*.lqts in the
+// LQT repo, never on this literal.
+//
+// STRATEGY_NAME must therefore be identifier-safe: no dashes, no leading digit.
 const STRATEGY_SRC = [
-	`strategy "${STRATEGY_NAME}" {`,
-	`  symbol: "BTCUSD"`,
-	`  when price_change(5m) > 0.02 { propose buy size 1 }`,
+	`strategy ${STRATEGY_NAME} {`,
+	`  params { band: 50, size_lots: 30, cap: 300 }`,
+	`  signal sma20 = sma(market.mid, 20)`,
+	`  when market.mid < sma20 - params.band && position.net_lots < params.cap {`,
+	`    buy params.size_lots lots @ market.ask`,
+	`  }`,
 	`}`,
 ].join("\n");
 
