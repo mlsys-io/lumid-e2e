@@ -141,6 +141,28 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 
 	test.beforeAll(async ({}, testInfo) => {
 		if (!WALK_ENABLED) testInfo.skip(true, "LUMID_E2E_LQT_WALK=0");
+
+		// An EXISTING account, when one is supplied, beats minting a fresh one.
+		//
+		// Not a convenience: a strategy deploy is gated by the mailbox
+		// consumer's tenant allowlist (`LQT_MAILBOX_TENANT_ID`, Secret
+		// `lqt-mailbox-consumer`). A user minted seconds ago is by definition
+		// NOT on it, so step 4-5 dies at `auth_denied: tenant … not served by
+		// this consumer instance` — and, because a denied deploy leaves the
+		// /xpio/strategies record at `sent`, it dies silently and looks like a
+		// broken marketplace. Point this at an allowlisted role-`user` account
+		// and the walk exercises the path a real cohort member takes.
+		const existingEmail = process.env.E2E_USER_EMAIL;
+		const existingPassword = process.env.E2E_USER_PASSWORD;
+		if (existingEmail && existingPassword) {
+			user = {
+				email: existingEmail,
+				password: existingPassword,
+				username: existingEmail.split("@")[0],
+			} as TestUser;
+			return;
+		}
+
 		if (!localOtpEnabled() && !process.env.E2E_GMAIL_APP_PASSWORD) {
 			testInfo.skip(
 				true,
@@ -164,7 +186,9 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 				true,
 				"No invitation code and no way to mint one: set E2E_INVITATION_CODE, " +
 					"or LUMID_PAT/RUNMESH_PAT (an admin PAT), or E2E_ADMIN_EMAIL+E2E_ADMIN_PASSWORD. " +
-					"lum.id is invite-only, so without one the account stops at the invitation wall.",
+					"lum.id is invite-only, so without one the account stops at the invitation wall. " +
+					"Prefer E2E_USER_EMAIL+E2E_USER_PASSWORD: a fresh user is not on the mailbox " +
+					"consumer's tenant allowlist and its deploy will be denied.",
 			);
 		}
 		user = await createUser(baseURL, {
