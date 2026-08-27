@@ -134,7 +134,13 @@ test.describe("18 — studio streamline", () => {
 		// ported onto the shared IndexList, which renders a bare `title` heading
 		// ("Experiments") and puts the row count nowhere. Assert the heading so
 		// this can't pass on the nav tab of the same name.
-		await expect(page.getByRole("heading", { name: "Experiments" })).toBeVisible({ timeout: 15_000 });
+		// Scoped to main: the shell's banner also renders an h1 "Experiments", so
+		// an unscoped role query is a strict-mode violation rather than a missing
+		// element -- the page is rendering fine. Same collision class as the
+		// "Display name" one in spec 05.
+		await expect(
+			page.getByRole("main").getByRole("heading", { name: "Experiments" }).first(),
+		).toBeVisible({ timeout: 15_000 });
 	});
 
 	test("chat tools loops_health + cycle_detail are callable", async ({ page }) => {
