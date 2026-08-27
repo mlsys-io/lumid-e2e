@@ -46,7 +46,7 @@ test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 		// the grid is on the page without opening anything. /studio/apps is the
 		// workspace now (it self-redirects to /studio/apps/<app>), so the index
 		// is /studio/apps/all.
-		await page.goto("/studio/apps/all");
+		await gotoRedirect(page, "/studio/apps/all");
 
 		// "Start with a template" is gone as a label; the launcher heading is
 		// "Set up a new agent" (or "Start with a starter" on the fresh-user hero).

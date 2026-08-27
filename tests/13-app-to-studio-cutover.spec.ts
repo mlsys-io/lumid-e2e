@@ -8,6 +8,7 @@
 
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
+import { gotoRedirect } from "../fixtures/nav";
 
 test.describe("13 — /app/* deep links redirect to Studio", () => {
 	test.beforeEach(async ({ page }) => {
@@ -33,7 +34,7 @@ test.describe("13 — /app/* deep links redirect to Studio", () => {
 
 	for (const [from, to] of cases) {
 		test(`${from} → studio`, async ({ page }) => {
-			await page.goto(from);
+			await gotoRedirect(page, from);
 			await expect(page).toHaveURL(to, { timeout: 10_000 });
 		});
 	}

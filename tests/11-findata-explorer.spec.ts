@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { watchConsole } from "../fixtures/console-watch";
 import { createUser } from "../fixtures/test-user";
+import { gotoRedirect } from "../fixtures/nav";
 
 // Journey 11 — the Data system app at /studio/data.
 //
@@ -35,7 +36,7 @@ import { createUser } from "../fixtures/test-user";
 const PAGE = "/studio/data";
 
 async function login(page: Page, baseURL: string, user: { email: string; password: string }) {
-  await page.goto(`${baseURL}/auth/login`);
+  await gotoRedirect(page, `${baseURL}/auth/login`);
   await page.getByLabel(/email/i).fill(user.email);
   await page.getByLabel(/password/i).fill(user.password);
   await page.getByRole("button", { name: /sign in/i }).click();
@@ -63,7 +64,7 @@ test.describe("11 — Studio Data app (Catalog + Explorer)", () => {
 
   test.beforeEach(async ({ page, baseURL }) => {
     await login(page, baseURL!, user);
-    await page.goto(`${baseURL}${PAGE}`);
+    await gotoRedirect(page, `${baseURL}${PAGE}`);
     // The tab strip is the page's own chrome — it renders before either
     // panel's fetches resolve.
     await expect(page.getByRole("button", { name: /^Catalog$/ })).toBeVisible({ timeout: 20_000 });

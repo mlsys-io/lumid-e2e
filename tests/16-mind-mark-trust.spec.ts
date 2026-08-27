@@ -29,6 +29,7 @@ import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
 import { watchConsole } from "../fixtures/console-watch";
 import { ensureSeedApp, anInstalledSkill, skillInventoryPopulated, hasRunHistory } from "../fixtures/seed-app";
+import { gotoRedirect } from "../fixtures/nav";
 
 test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 	let seeded = false;
@@ -102,7 +103,7 @@ test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 	});
 
 	test("/studio/mind redirects Home (Improve folded into the panel)", async ({ page }) => {
-		await page.goto("/studio/mind");
+		await gotoRedirect(page, "/studio/mind");
 		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 	});
 
@@ -112,7 +113,7 @@ test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 			"/me/skills is blind to tenant installs (filesystem-backed, per-replica)",
 		);
 		const errors = watchConsole(page);
-		await page.goto("/studio/skills");
+		await gotoRedirect(page, "/studio/skills");
 		await page.waitForLoadState("networkidle");
 		await expect(page.getByText(/Installed/i).first()).toBeVisible({ timeout: 15_000 });
 		expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);

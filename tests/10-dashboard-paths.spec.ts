@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createUser } from "../fixtures/test-user";
 import { watchConsole } from "../fixtures/console-watch";
+import { gotoRedirect } from "../fixtures/nav";
 
 // Journey 10 — every lum.id dashboard path smoke-tests cleanly.
 //
@@ -69,7 +70,7 @@ test.describe("10 — dashboard paths smoke", () => {
     });
 
     test.beforeEach(async ({ page, baseURL }) => {
-      await page.goto(`${baseURL}/auth/login`);
+      await gotoRedirect(page, `${baseURL}/auth/login`);
       await page.getByLabel(/email/i).fill(user.email);
       await page.getByLabel(/password/i).fill(user.password);
       await page.getByRole("button", { name: /sign in/i }).click();
@@ -79,8 +80,12 @@ test.describe("10 — dashboard paths smoke", () => {
     for (const def of USER_PATHS) {
       test(`user ${def.path}`, async ({ page, baseURL }) => {
         const errs = watchConsole(page);
-        const resp = await page.goto(`${baseURL}${def.path}`);
-        expect(resp?.status(), `GET ${def.path}`).toBeLessThan(500);
+        const resp = await gotoRedirect(page, `${baseURL}${def.path}`);
+        // A null response means the client-side redirect committed before a
+        // response was recorded -- that is the route working, not a 5xx. Only
+        // assert the status when there IS one; the content assertions below are
+        // what actually prove the page rendered.
+        if (resp) expect(resp.status(), `GET ${def.path}`).toBeLessThan(500);
 
         // Sidebar (AppLayout) should always render for /dashboard/* pages
         await expect(page.getByText(/datasets/i).first()).toBeVisible({ timeout: def.patient ? 20_000 : 10_000 });
@@ -104,7 +109,7 @@ test.describe("10 — dashboard paths smoke", () => {
     test.beforeEach(async ({ page, baseURL }) => {
       const email = process.env.E2E_ADMIN_EMAIL || "admin@lum.id";
       const password = process.env.E2E_ADMIN_PASSWORD!;
-      await page.goto(`${baseURL}/auth/login`);
+      await gotoRedirect(page, `${baseURL}/auth/login`);
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(password);
       await page.getByRole("button", { name: /sign in/i }).click();
@@ -117,8 +122,12 @@ test.describe("10 — dashboard paths smoke", () => {
     for (const def of ADMIN_PATHS) {
       test(`admin ${def.path}`, async ({ page, baseURL }) => {
         const errs = watchConsole(page);
-        const resp = await page.goto(`${baseURL}${def.path}`);
-        expect(resp?.status(), `GET ${def.path}`).toBeLessThan(500);
+        const resp = await gotoRedirect(page, `${baseURL}${def.path}`);
+        // A null response means the client-side redirect committed before a
+        // response was recorded -- that is the route working, not a 5xx. Only
+        // assert the status when there IS one; the content assertions below are
+        // what actually prove the page rendered.
+        if (resp) expect(resp.status(), `GET ${def.path}`).toBeLessThan(500);
 
         // Shell landmark, then the per-page marker. This asserted /datasets/i --
         // a nav entry from the retired /dashboard shell. Studio's rail says

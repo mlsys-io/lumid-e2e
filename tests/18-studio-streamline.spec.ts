@@ -37,7 +37,7 @@ test.describe("18 — studio streamline", () => {
 	// this was matching before the rail was relabelled.
 	test("sidebar has the consolidated nav (Data · Library · Scheduled)", async ({ page }) => {
 		const errors = watchConsole(page);
-		await page.goto("/studio/apps");
+		await gotoRedirect(page, "/studio/apps");
 		for (const label of ["Data", "Library", "Scheduled"]) {
 			await expect(page.getByRole("link", { name: new RegExp(`^${label}`) }).first()).toBeVisible({ timeout: 15_000 });
 		}
@@ -46,7 +46,7 @@ test.describe("18 — studio streamline", () => {
 
 	test("/studio is the AI chat — greeting + composer card", async ({ page }) => {
 		const errors = watchConsole(page);
-		await page.goto("/studio");
+		await gotoRedirect(page, "/studio");
 		await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening)/ })).toBeVisible({ timeout: 15_000 });
 		await expect(page.getByPlaceholder(/Ask anything/)).toBeVisible();
 		expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
@@ -60,7 +60,7 @@ test.describe("18 — studio streamline", () => {
 	// rename, so "Apps" matches no heading anywhere.
 	test("the agent index is a light list whose rows open the app", async ({ page }) => {
 		const errors = watchConsole(page);
-		await page.goto("/studio/apps/all");
+		await gotoRedirect(page, "/studio/apps/all");
 		// Serif page title, not a stat-chip hero.
 		await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible({ timeout: 15_000 });
 		// A row used to fire the grounded ask and land you on /studio. IndexRow
@@ -76,9 +76,9 @@ test.describe("18 — studio streamline", () => {
 	});
 
 	test("library hosts marketplace/skills/experiments tabs; old routes redirect", async ({ page }) => {
-		await page.goto("/studio/skills");
+		await gotoRedirect(page, "/studio/skills");
 		await expect(page).toHaveURL(/\/studio\/library\/skills/, { timeout: 10_000 });
-		await page.goto("/studio/experiments");
+		await gotoRedirect(page, "/studio/experiments");
 		await expect(page).toHaveURL(/\/studio\/library\/experiments/, { timeout: 10_000 });
 		for (const label of ["Marketplace", "Skills", "Experiments"]) {
 			await expect(page.getByRole("link", { name: label }).first()).toBeVisible();
@@ -127,9 +127,9 @@ test.describe("18 — studio streamline", () => {
 			!(await skillInventoryPopulated(page.request)),
 			"/me/skills is blind to tenant installs (filesystem-backed, per-replica)",
 		);
-		await page.goto("/studio/library/skills");
+		await gotoRedirect(page, "/studio/library/skills");
 		await expect(page.getByText(/Installed/i).first()).toBeVisible({ timeout: 15_000 });
-		await page.goto("/studio/library/experiments");
+		await gotoRedirect(page, "/studio/library/experiments");
 		// Was /Experiments \(/ — the count in parens went away when the page was
 		// ported onto the shared IndexList, which renders a bare `title` heading
 		// ("Experiments") and puts the row count nowhere. Assert the heading so

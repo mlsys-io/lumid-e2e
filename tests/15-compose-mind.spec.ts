@@ -11,6 +11,7 @@
 
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
+import { gotoRedirect } from "../fixtures/nav";
 
 test.describe("15 — Create + Improve surfaces (W2-W4)", () => {
 	test.beforeEach(async ({ page }) => {
@@ -65,20 +66,28 @@ test.describe("15 — Create + Improve surfaces (W2-W4)", () => {
 	// and "Describe what you want" is now a starter tile in QuickStarters, not a
 	// tab. Composition moved into the chat — compose_workflow renders inline as
 	// an AssemblyCard instead of popping this modal.
-	test("/studio/workflows redirects Home; New workflow opens composer", async ({ page }) => {
-		await page.goto("/studio/workflows");
+	test("/studio/workflows redirects Home", async ({ page }) => {
+		await gotoRedirect(page, "/studio/workflows");
 		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
-		const newBtn = page.getByRole("button", { name: /New workflow/i });
-		await expect(newBtn).toBeVisible();
-		await newBtn.click();
-		// Composer modal opens with the "Describe what you want" tab.
-		await expect(page.getByRole("heading", { name: /^New workflow$/ })).toBeVisible();
-		await expect(page.getByRole("button", { name: /Describe what you want/i })).toBeVisible();
-		await expect(page.getByRole("button", { name: /Design visually/i })).toBeVisible();
 	});
 
+	// RECORDED FINDING (was a deliberately-failing assertion, removed
+	// 2026-08-28): the two-tab composer this test opened no longer exists.
+	// "Design visually" is gone from the whole bundle -- it proxied to n8n, dead
+	// cluster-side since the UKS cutover -- and "Describe what you want" became a
+	// starter tile in QuickStarters rather than a tab. Composition moved into the
+	// chat: compose_workflow renders inline as an AssemblyCard instead of popping
+	// a modal. /studio/apps is StudioWorkspace now and carries no "New workflow"
+	// button at all; the affordance survives as a LINK to /studio/a/<app>/manage.
+	//
+	// Recorded rather than left red, for the reason spec 16's header already
+	// gives: a permanently-failing test does not report a defect, it teaches the
+	// reader to skim red. The redirect half above is real coverage and is kept.
+	// The guided NewWorkflowFlow still exists and is reachable at
+	// /studio/apps/all?compose=1, which spec 17 covers.
+
 	test("/studio/mind redirects Home (folded into per-workflow insights)", async ({ page }) => {
-		await page.goto("/studio/mind");
+		await gotoRedirect(page, "/studio/mind");
 		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 	});
 

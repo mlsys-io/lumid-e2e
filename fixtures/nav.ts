@@ -1,4 +1,4 @@
-import { type Page } from "@playwright/test";
+import { type Page, type Response } from "@playwright/test";
 
 /**
  * Navigate to a URL that immediately client-side redirects.
@@ -19,8 +19,9 @@ import { type Page } from "@playwright/test";
  * wins the race anyway. Assert on the final URL afterwards — that is the
  * behaviour under test, not which navigation event fired.
  */
-export async function gotoRedirect(page: Page, url: string): Promise<void> {
-	await page.goto(url, { waitUntil: "commit" }).catch(() => {
-		/* the redirect fired first — assert on the resulting URL instead */
-	});
+// Returns the navigation Response so callers that check status() still can.
+// Null means the redirect won the race before a response was recorded, which is
+// not a failure -- assert on the resulting URL or content instead of the status.
+export async function gotoRedirect(page: Page, url: string): Promise<Response | null> {
+	return page.goto(url, { waitUntil: "commit" }).catch(() => null);
 }
