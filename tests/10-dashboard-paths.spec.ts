@@ -43,11 +43,15 @@ const USER_PATHS: PathDef[] = [
   { path: "/dashboard/inbox",                 marker: /inbox|messages|memo/i },
 ];
 
+// /studio/*, not /dashboard/*. The whole /dashboard URL surface was retired
+// 2026-06-19 and consolidated under /studio (App.tsx says so); /dashboard/admin/*
+// still REDIRECTS via DashboardAdminToStudio, so old links survive -- but the
+// landing URL is /studio/admin/*, which is what these should assert.
 const ADMIN_PATHS: PathDef[] = [
-  { path: "/dashboard/admin/users",            marker: /users|invitations|access/i },
-  { path: "/dashboard/admin/clusters",         marker: /clusters|infrastructure|nodes/i, patient: true },
-  { path: "/dashboard/admin/competitions",     marker: /competitions|lumid market/i, patient: true },
-  { path: "/dashboard/super-admin",            marker: /super admin|operational|telemetry/i, patient: true },
+  { path: "/studio/admin/users",               marker: /users|invitations|access/i },
+  { path: "/studio/admin/clusters",            marker: /clusters|infrastructure|nodes/i, patient: true },
+  { path: "/studio/admin/competitions",        marker: /competitions|lumid market/i, patient: true },
+  { path: "/studio/super-admin",               marker: /super admin|operational|telemetry/i, patient: true },
 ];
 
 // Track unexpected console errors. We allowlist some noisy-but-harmless
@@ -123,8 +127,10 @@ test.describe("10 — dashboard paths smoke", () => {
       await page.getByLabel(/email/i).fill(email);
       await page.getByLabel(/password/i).fill(password);
       await page.getByRole("button", { name: /sign in/i }).click();
-      // Login redirects to /dashboard
-      await page.waitForURL(/\/(dashboard|account)/, { timeout: 15_000 });
+      // Login lands in Studio now (admins -> /studio, users -> /studio/today);
+      // /dashboard and /account both redirect there. Waiting only for the old
+      // pair timed out before a single admin assertion ran.
+      await page.waitForURL(/\/(studio|dashboard|account)/, { timeout: 15_000 });
     });
 
     for (const def of ADMIN_PATHS) {
@@ -133,7 +139,13 @@ test.describe("10 — dashboard paths smoke", () => {
         const resp = await page.goto(`${baseURL}${def.path}`);
         expect(resp?.status(), `GET ${def.path}`).toBeLessThan(500);
 
-        await expect(page.getByText(/datasets/i).first()).toBeVisible({ timeout: def.patient ? 20_000 : 10_000 });
+        // Shell landmark, then the per-page marker. This asserted /datasets/i --
+        // a nav entry from the retired /dashboard shell. Studio's rail says
+        // "Data", so the generic "did the shell render" check could never match
+        // and every admin page failed on chrome naming rather than on content.
+        await expect(
+          page.getByText(/new chat|library|scheduled/i).first(),
+        ).toBeVisible({ timeout: def.patient ? 20_000 : 10_000 });
         await expect(page.getByText(def.marker).first()).toBeVisible({ timeout: def.patient ? 20_000 : 10_000 });
 
         await page.waitForTimeout(500);

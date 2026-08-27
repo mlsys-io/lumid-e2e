@@ -1,55 +1,58 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createUser } from "../fixtures/test-user";
 
-// Journey 11 — FinData Explorer (lum.id/dashboard/datasets/findata).
+// Journey 11 — the Data system app at /studio/data.
 //
-// Covers:
-//   • page title + freshness badge + symbol search dropdown
-//   • each top tab renders for an equity (AAPL)
-//   • kind-based tab filtering (QQQ as ETF shows fewer tabs;
-//     ETF Overview shows fund info + holdings)
-//   • crypto (BTCUSD) renders simple overview + chart
-//   • forex (EURUSD) — minimum tab set
-//   • index (^GSPC) — chart works
-//   • watchlist pin/unpin persists in localStorage
-//   • Catalog probe completes with mostly-green statuses
-//   • Compare tab merges multiple symbols
-
-const PAGE = "/dashboard/datasets/findata";
+// WHY THIS FILE IS A REWRITE, NOT A SELECTOR REFRESH
+// --------------------------------------------------
+// It used to drive the FinData Explorer at /dashboard/datasets/findata:
+// symbol search, kind pills, watchlist pin, Chart / Compare / Screener /
+// Catalog panes. A partial repair moved the PAGE constant to /studio/data on
+// the assumption that the same page had simply been re-homed. It had not.
+//
+//   • The FinData Explorer component still exists — at
+//     src/pages/deprecated/dashboard/datasets-findata.tsx — but NOTHING mounts
+//     it. App.tsx does not import it, it is absent from NATIVE_SURFACES
+//     (src/components/app-surface/native-registry.ts), and its old URL now
+//     falls through `<Route path="/dashboard/*" element={<Navigate to="/studio" />}>`.
+//     App.tsx says so directly: "Quant* + datasets-* page mounts retired
+//     2026-06-19". So every symbol/watchlist/tab assertion below the fold was
+//     asserting against dead code, and would fail on ANY url.
+//   • /studio/data (src/pages/studio/data.tsx) is a DIFFERENT surface: a
+//     first-party system app with three local-state tabs —
+//     Catalog (DataLakeViewer), Explorer (DataAppBrowser), Query (SqlConsole).
+//     No symbol search, no watchlist, no chart, no freshness badge.
+//
+// So this spec now covers what /studio/data actually is. The Query tab is
+// deliberately NOT covered here — tests/23-studio-sql-console.spec.ts owns it
+// end to end, including the three-tab strip.
+//
+// Coverage deliberately dropped: the FinData Explorer's own behaviour (kind
+// detection, tab allowlist per instrument kind, watchlist persistence). That
+// product surface is retired; if it is ever re-mounted, restore those tests
+// from git history rather than reconstructing them.
+const PAGE = "/studio/data";
 
 async function login(page: Page, baseURL: string, user: { email: string; password: string }) {
   await page.goto(`${baseURL}/auth/login`);
   await page.getByLabel(/email/i).fill(user.email);
   await page.getByLabel(/password/i).fill(user.password);
   await page.getByRole("button", { name: /sign in/i }).click();
-  await page.waitForURL(/\/(dashboard|account|app)/, { timeout: 15_000 });
+  // Studio is where login lands; the old trio all redirect there. Waiting on
+  // only the old trio timed out in beforeEach, so every test in this file
+  // failed before it reached its own assertions.
+  await page.waitForURL(/\/(studio|dashboard|account|app)/, { timeout: 15_000 });
 }
 
-async function pickSymbol(page: Page, symbol: string) {
-  const input = page.getByPlaceholder(/search symbol/i);
-  await input.click();
-  await input.fill(symbol);
-  await page.keyboard.press("Enter");
-  // Wait for the symbol pill in the header to update
-  await expect(page.locator("header, div").getByText(symbol, { exact: true }).first()).toBeVisible({ timeout: 10_000 });
-}
-
-async function tabsVisible(page: Page): Promise<string[]> {
-  // Read all visible top-tab labels (the row right after the header bar)
-  const labels = await page.locator("button").allTextContents();
-  // Filter to the canonical set we care about
-  const known = ["Overview", "Chart", "Live", "Financials", "Reports", "Ownership", "Profile", "Insights", "News"];
-  return known.filter((l) => labels.includes(l));
-}
-
-test.describe("11 — FinData Explorer", () => {
+test.describe("11 — Studio Data app (Catalog + Explorer)", () => {
   let user: { email: string; password: string };
 
   test.beforeAll(async ({ baseURL }, testInfo) => {
-    // Prefer a freshly-minted user, but fall back to the admin account so
-    // tests still run in CI environments without Gmail IMAP configured.
+    // Prefer a freshly-minted user — /studio/data is behind AuthGuard only,
+    // no admin role required — but fall back to the admin account so this
+    // still runs where Gmail IMAP isn't configured.
     if (process.env.E2E_GMAIL_APP_PASSWORD) {
-      user = await createUser(baseURL!, { tag: `findata-${Date.now().toString(36)}` });
+      user = await createUser(baseURL!, { tag: `data-${Date.now().toString(36)}` });
     } else if (process.env.E2E_ADMIN_PASSWORD) {
       user = { email: process.env.E2E_ADMIN_EMAIL || "admin@lum.id", password: process.env.E2E_ADMIN_PASSWORD };
     } else {
@@ -60,149 +63,64 @@ test.describe("11 — FinData Explorer", () => {
   test.beforeEach(async ({ page, baseURL }) => {
     await login(page, baseURL!, user);
     await page.goto(`${baseURL}${PAGE}`);
-    // Page header title (the one in main, not the sidebar link)
-    await expect(page.getByRole("main").getByText(/FinData Explorer/i)).toBeVisible();
+    // The tab strip is the page's own chrome — it renders before either
+    // panel's fetches resolve.
+    await expect(page.getByRole("button", { name: /^Catalog$/ })).toBeVisible({ timeout: 20_000 });
   });
 
-  test("page header — title, freshness, search, kind pill", async ({ page }) => {
-    // Title (scoped to main to avoid collision with sidebar link)
-    await expect(page.getByRole("main").getByText(/FinData Explorer/i)).toBeVisible();
-    // Freshness badge (e.g. "89 fresh · 27 stale" or "0 stale")
-    await expect(page.getByText(/fresh.*stale/i)).toBeVisible({ timeout: 15_000 });
-    // Symbol input visible
-    await expect(page.getByPlaceholder(/search symbol/i)).toBeVisible();
-    // Default symbol AAPL pill + Equity kind pill
-    await expect(page.getByText("AAPL", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText(/^Equity$/).first()).toBeVisible({ timeout: 15_000 });
-    // Utility shortcuts in header
-    await expect(page.getByRole("button", { name: /compare/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /screener/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /catalog/i })).toBeVisible();
+  test("Catalog is the default tab and the data-lake tree renders", async ({ page }) => {
+    // Catalog mounts eagerly (seen = new Set(["catalog"])); Explorer and Query
+    // mount lazily on first click.
+    await expect(page.getByPlaceholder(/filter tables across all instances/i)).toBeVisible({ timeout: 20_000 });
+    // Header summary: "<n>/3 instances · <n> schemas · <n> tables · read-only".
+    // Asserted as a pattern, not a count — an offline instance is a legitimate
+    // state here and must not turn this into a flake.
+    await expect(page.getByText(/\d+\/3 instances .* tables/i)).toBeVisible({ timeout: 25_000 });
   });
 
-  test("symbol search dropdown surfaces the typed query even when server skips it", async ({ page }) => {
-    const input = page.getByPlaceholder(/search symbol/i);
-    await input.click();
-    await input.fill("SPY");
-    // First dropdown item is "Use as typed (Enter)" — the UI workaround for the
-    // server's exact-symbol search bug
-    await expect(page.getByText(/use as typed/i)).toBeVisible({ timeout: 15_000 });
+  test("Catalog lists all three lake instances", async ({ page }) => {
+    // LAKE_INSTANCES in src/api/dataLake.ts — FinData, Lumid Data, LQT Data.
+    // Each renders a tree row that reads either "<n> schemas" or "offline";
+    // the label is what must always be there.
+    for (const label of ["FinData", "Lumid Data", "LQT Data"]) {
+      await expect(page.getByText(label, { exact: true }).first()).toBeVisible({ timeout: 25_000 });
+    }
   });
 
-  test("equity (AAPL) — all 9 tabs visible + Overview renders rich hero", async ({ page }) => {
-    const tabs = await tabsVisible(page);
-    expect(tabs).toEqual(
-      expect.arrayContaining(["Overview", "Chart", "Live", "Financials", "Reports", "Ownership", "Profile", "Insights", "News"]),
-    );
-    // Overview hero shows the company name + price
-    await expect(page.getByText(/Apple Inc/i)).toBeVisible({ timeout: 15_000 });
+  test("Explorer loads findata's endpoint catalog and can arm a request", async ({ page }) => {
+    await page.getByRole("button", { name: /^Explorer$/ }).click();
+    // DataAppBrowser fetches /dataapp-proxy/_sources then
+    // /dataapp-proxy/findata/openapi.json. Both are same-origin and public.
+    await expect(page.getByPlaceholder(/filter endpoints/i)).toBeVisible({ timeout: 25_000 });
+    // "<n> endpoints" — a real catalog, not an empty shell. `[1-9]` rather
+    // than `\d` so a 0 (catalog fetch failed) fails the test instead of
+    // passing on the text alone.
+    await expect(page.getByText(/[1-9]\d* endpoints/)).toBeVisible({ timeout: 25_000 });
+    // Before an endpoint is picked, the right pane explains itself.
+    await expect(page.getByText(/pick an endpoint to query/i)).toBeVisible();
+
+    // Pick the first endpoint in the list. Endpoint buttons are monospaced
+    // path labels inside the 320px left rail.
+    const endpoints = page.locator("button.font-mono");
+    await expect(endpoints.first()).toBeVisible({ timeout: 25_000 });
+    await endpoints.first().click();
+    // A REST endpoint arms a Run button; SSE/WS endpoints render a
+    // "Streaming endpoint" / "WebSocket endpoint" explainer instead — both
+    // are correct outcomes, so accept either rather than assuming ordering.
+    await expect(
+      page.getByRole("button", { name: /^Run$/ })
+        .or(page.getByText(/streaming endpoint|websocket endpoint/i)),
+    ).toBeVisible({ timeout: 20_000 });
   });
 
-  test("ETF (QQQ) — reduced tab set + ETF-aware Overview", async ({ page }) => {
-    await pickSymbol(page, "QQQ");
-    // Kind pill flips to ETF
-    await expect(page.getByText(/^ETF$/).first()).toBeVisible({ timeout: 15_000 });
-    // Equity-only tabs are hidden
-    const tabs = await tabsVisible(page);
-    expect(tabs).not.toContain("Financials");
-    expect(tabs).not.toContain("Reports");
-    expect(tabs).not.toContain("Ownership");
-    expect(tabs).not.toContain("Profile");
-    expect(tabs).not.toContain("Insights");
-    // Cross-kind tabs still present
-    expect(tabs).toEqual(expect.arrayContaining(["Overview", "Chart", "Live", "News"]));
-    // Overview shows ETF-specific content — top-10 holdings widget
-    await expect(page.getByText(/top-10 holdings|fund info|holdings/i).first()).toBeVisible({ timeout: 20_000 });
-  });
-
-  test("crypto (BTCUSD) — minimal tab set + chart works", async ({ page }) => {
-    await pickSymbol(page, "BTCUSD");
-    await expect(page.getByText(/^Crypto$/).first()).toBeVisible({ timeout: 15_000 });
-    const tabs = await tabsVisible(page);
-    expect(tabs).toEqual(expect.arrayContaining(["Overview", "Chart", "Live", "News"]));
-    // Switch to Chart and verify it shows bars (kv.run has BTCUSD OHLC since 2026-05-20)
-    await page.getByRole("button", { name: /^Chart$/ }).click();
-    await expect(page.getByText(/\d+ bars/i)).toBeVisible({ timeout: 20_000 });
-  });
-
-  test("forex (EURUSD) — Forex kind, even smaller tab set", async ({ page }) => {
-    await pickSymbol(page, "EURUSD");
-    await expect(page.getByText(/^Forex$/).first()).toBeVisible({ timeout: 15_000 });
-    const tabs = await tabsVisible(page);
-    // News is hidden for forex (per kinds allowlist)
-    expect(tabs).not.toContain("News");
-    expect(tabs).toEqual(expect.arrayContaining(["Overview", "Chart", "Live"]));
-  });
-
-  test("index (^GSPC) — Index kind", async ({ page }) => {
-    await pickSymbol(page, "^GSPC");
-    await expect(page.getByText(/^Index$/).first()).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("watchlist pin + unpin survives reload", async ({ page, baseURL }) => {
-    // Reset watchlist so the test is deterministic regardless of previous runs
-    await page.evaluate(() => localStorage.removeItem("findata-explorer:watchlist"));
-    await page.reload();
-
-    // Pin AAPL (button title is "Pin to watchlist")
-    await page.locator('button[title="Pin to watchlist"]').click();
-    await expect(page.locator('button[title="Unpin from watchlist"]')).toBeVisible();
-    // Reload, pin should still be there
-    await page.goto(`${baseURL}${PAGE}`);
-    await expect(page.locator('button[title="Unpin from watchlist"]')).toBeVisible({ timeout: 10_000 });
-    // Watchlist strip shows the symbol
-    await expect(page.getByText(/^Watch$/i)).toBeVisible();
-    // Unpin
-    await page.locator('button[title="Unpin from watchlist"]').click();
-    await expect(page.locator('button[title="Pin to watchlist"]')).toBeVisible();
-  });
-
-  test("Catalog tab probes all endpoints and reports status counts", async ({ page }) => {
-    await page.getByRole("button", { name: /catalog/i }).click();
-    // Stat cards: Endpoints / Have data / Empty / Errored
-    await expect(page.getByText(/Endpoints/i)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/Have data/i)).toBeVisible();
-    await expect(page.getByText(/Empty/i)).toBeVisible();
-    await expect(page.getByText(/Errored/i)).toBeVisible();
-    // Filter input
-    await expect(page.getByPlaceholder(/filter endpoints/i)).toBeVisible();
-  });
-
-  test("Compare tab — current symbol shows in return leaderboard", async ({ page }) => {
-    // Default AAPL — Compare should display AAPL in the leaderboard
-    await page.getByRole("button", { name: /compare/i }).click();
-    await expect(page.getByText(/Return over selected period/i)).toBeVisible({ timeout: 15_000 });
-    // AAPL appears somewhere in the leaderboard
-    await expect(page.getByText("AAPL").first()).toBeVisible();
-  });
-
-  test("Screener — sector pie + filter", async ({ page }) => {
-    await page.getByRole("button", { name: /screener/i }).click();
-    await expect(page.getByPlaceholder(/ticker prefix/i)).toBeVisible();
-    await page.getByPlaceholder(/ticker prefix/i).fill("AAPL");
-    // Expect at least one result row
-    await expect(page.getByText(/Apple/i).first()).toBeVisible({ timeout: 10_000 });
-  });
-
-  test("Chart tab — MA toggles change rendering", async ({ page }) => {
-    await page.getByRole("button", { name: /^Chart$/ }).click();
-    // Range buttons
-    await expect(page.getByRole("button", { name: /^1M$/ })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("button", { name: /MA20/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /MA50/i })).toBeVisible();
-    // Toggling shouldn't crash
-    await page.getByRole("button", { name: /MA20/i }).click();
-    await page.getByRole("button", { name: /MA50/i }).click();
-  });
-
-  test("News tab — error state surfaces clearly when service is down", async ({ page }) => {
-    await page.getByRole("button", { name: /^News$/ }).click();
-    // Either news renders, "No recent news" shows, OR a clear error
-    // appears. Just make sure the pane is not blank.
-    const body = page.locator("main, [class*='overflow-auto']").first();
-    await expect(body).toBeVisible();
-    // Should not be completely empty
-    const text = await body.innerText();
-    expect(text.length).toBeGreaterThan(20);
+  test("Explorer's source picker offers every allowlisted data app", async ({ page }) => {
+    await page.getByRole("button", { name: /^Explorer$/ }).click();
+    const select = page.locator("select").first();
+    await expect(select).toBeVisible({ timeout: 25_000 });
+    // /dataapp-proxy/_sources serves findata + lumid-data + lqt-data today.
+    // Assert the configured default is selected and at least one sibling
+    // exists, rather than pinning the exact roster.
+    await expect(select).toHaveValue("findata");
+    expect(await select.locator("option").count()).toBeGreaterThan(1);
   });
 });
