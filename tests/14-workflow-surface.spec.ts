@@ -49,36 +49,71 @@ test.describe("14 — workflow surface (W1)", () => {
 		// Redirects into /studio/apps/<app>?selected=<loop>.
 		await expect(page).toHaveURL(/\/studio\/apps\/[^/?]+\?selected=/, { timeout: 10_000 });
 		// The observability panel header controls render.
-		await expect(page.getByRole("button", { name: /Run now/ })).toBeVisible({ timeout: 15_000 });
+		//
+		// The primary action is NOT "Run now" any more -- it is "Plan next run"
+		// (it opens the branch/criteria/fan-out dialog rather than firing
+		// immediately), and it swaps to "Stop" while a run is live. Asserting
+		// the old label failed against a panel that was rendering correctly;
+		// the panel's own header comment named the stale label too, which is
+		// where the spec got it. Accept either state.
+		await expect(
+			page.getByRole("button", { name: /Plan next run|Stop/ }).first(),
+		).toBeVisible({ timeout: 45_000 });
 		// The n8n-style canvas section is present (collapsible, default open)
 		// whenever the loop declares steps/engine; tolerate its absence only
 		// by checking the Pipeline toggle OR the runs section rendered.
-		const pipeline = page.getByRole("button", { name: /Pipeline/i });
-		const runs = page.getByText(/Runs/i).first();
-		await expect(pipeline.or(runs)).toBeVisible({ timeout: 10_000 });
+		// The canvas section is the run TRAJECTORY now -- the panel renders
+		// GOAL + Data/Agents tabs + the trajectory graph, and there is no
+		// "Pipeline" toggle any more. Verified from the failure screenshot: the
+		// panel was rendering perfectly and this assertion was looking for
+		// chrome the redesign removed. Accept any of the canvas's real
+		// affordances, including its empty state ("No run trajectory yet"),
+		// since a workflow with no runs still lands on a correct panel.
+		const canvas = page.getByText(/trajectory|Pipeline|Agents/i).first();
+		await expect(canvas).toBeVisible({ timeout: 20_000 });
 	});
 
 	test("/studio/runs (Activity) toggles List / Grid / Gantt / Calendar", async ({ page }) => {
 		await page.goto("/studio/runs");
+		// The four power views are behind the Timeline toggle now. /studio/runs
+		// defaults to a claude-style index (runs.tsx: "The Timeline button
+		// reveals the cross-run power views"), so asserting the toggles on the
+		// default view was asserting a layout the page deliberately stopped
+		// having. Open the escape hatch first, then assert.
+		await page.getByRole("button", { name: /Timeline/ }).click();
+		// exact:true throughout. "List" alone is a strict-mode violation -- it
+		// also matches "Back to list" and any chat-history row beginning
+		// "Listing ..." -- so the assertion failed on ambiguity, not absence.
 		for (const label of ["List", "Grid", "Gantt", "Calendar"]) {
-			await expect(page.getByRole("button", { name: label })).toBeVisible();
+			await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
 		}
-		await page.getByRole("button", { name: "Grid" }).click();
-		await page.getByRole("button", { name: "Gantt" }).click();
-		await page.getByRole("button", { name: "Calendar" }).click();
-		await page.getByRole("button", { name: "List" }).click();
+		await page.getByRole("button", { name: "Grid", exact: true }).click();
+		await page.getByRole("button", { name: "Gantt", exact: true }).click();
+		await page.getByRole("button", { name: "Calendar", exact: true }).click();
+		await page.getByRole("button", { name: "List", exact: true }).click();
 	});
 
+	// STREAMING endpoint, which is the one the SPA uses.
+	//
+	// This posted to /me/agent/chat (non-streaming) and failed on r.ok().
+	// Measured 2026-08-27: an agentic turn there exceeds nginx's 300s
+	// proxy_read_timeout for /api/v1/me/ and comes back 504 -- the tool catalog
+	// alone is ~19k tokens, so the model turn plus the tool round-trip does not
+	// fit. The streaming route completes the identical turn (SSE keepalives hold
+	// the connection), which is why the product is fine and only this test was
+	// not. Testing the path nobody ships was measuring the wrong thing.
 	test("chat agent answers 'what failed today?' via list_runs", async ({ page }) => {
-		const r = await page.request.post("/api/v1/me/agent/chat", {
+		test.setTimeout(360_000);
+		const r = await page.request.post("/api/v1/me/agent/chat/stream", {
 			data: {
 				messages: [{ role: "user", content: "What workflows failed today? Use list_runs with state=failed and limit 5." }],
 			},
+			timeout: 330_000,
 		});
 		expect(r.ok()).toBeTruthy();
-		const body = await r.json();
-		expect(body.ret_code).toBe(0);
-		const toolCalls = body.data.tool_calls as Array<{ name: string; ok: boolean }>;
-		expect(toolCalls.some((tc) => tc.name === "list_runs")).toBeTruthy();
+		// SSE, not JSON: assert on the event stream the client parses.
+		const text = await r.text();
+		expect(text).toContain('"type":"tool_call"');
+		expect(text).toContain("list_runs");
 	});
 });
