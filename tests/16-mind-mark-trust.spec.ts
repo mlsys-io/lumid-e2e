@@ -28,14 +28,27 @@
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
 import { watchConsole } from "../fixtures/console-watch";
+import { ensureSeedApp, anInstalledSkill, skillInventoryPopulated, hasRunHistory } from "../fixtures/seed-app";
 
 test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
-	test.beforeEach(async ({ page }) => {
+	let seeded = false;
+	test.beforeEach(async ({ page }, testInfo) => {
 		await loginAsAdmin(page);
+		if (!seeded) seeded = await ensureSeedApp(page.request);
+		if (!seeded) testInfo.skip(true, "could not seed an installed app for this account");
 	});
 
-	test("/me/mind/skills returns rows with version + model + casebook dims", async ({ page }) => {
-		const r = await page.request.get("/api/v1/me/mind/skills?compare=tavily-search");
+	test("/me/mind/skills returns rows with version + model + casebook dims", async ({ page }, testInfo) => {
+		// Was hardcoded to `tavily-search`, which existed only because the
+		// author's account had imported it. Discover a skill this account
+		// actually has, so the assertion travels.
+		const skill = await anInstalledSkill(page.request);
+		// Not an empty account: /me/skills walks the filesystem and cannot see a
+		// tenant install (see fixtures/seed-app.ts::skillInventoryPopulated).
+		// Skip with the reason instead of failing an assertion the endpoint
+		// cannot satisfy.
+		testInfo.skip(!skill, "/me/skills is blind to tenant installs — nothing to compare");
+		const r = await page.request.get(`/api/v1/me/mind/skills?compare=${encodeURIComponent(skill)}`);
 		expect(r.ok()).toBeTruthy();
 		const body = await r.json();
 		expect(body.ret_code).toBe(0);
@@ -49,7 +62,10 @@ test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 		}
 	});
 
-	test("/me/mind/workflow returns multi-headline deltas (synthetic-fueled)", async ({ page }) => {
+	test("/me/mind/workflow returns multi-headline deltas (synthetic-fueled)", async ({ page }, testInfo) => {
+		// Deltas are computed FROM runs. A seeded app has workflows but no run
+		// history, and this account has none (/me/runs count=0).
+		testInfo.skip(!(await hasRunHistory(page.request)), "no run history on this account — deltas need runs");
 		const r = await page.request.get("/api/v1/me/mind/workflow/personal-agent:morning_brief");
 		expect(r.ok()).toBeTruthy();
 		const body = await r.json();
@@ -58,8 +74,14 @@ test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 		expect(body.data.deltas.length).toBeGreaterThan(0);
 	});
 
-	test("/me/runs/:id/mark accepts succeeded; rejects bad id", async ({ page }) => {
-		const goodId = "scheduled:personal-agent:morning_brief:20260520T120000Z";
+	test("/me/runs/:id/mark accepts succeeded; rejects bad id", async ({ page }, testInfo) => {
+		// The "good" id was hardcoded to a run that exists only on the account
+		// this was written against — it 1404s everywhere else. Take a real id
+		// from this account, and skip when there is none.
+		testInfo.skip(!(await hasRunHistory(page.request)), "no run history on this account — nothing to mark");
+		const runs = await (await page.request.get("/api/v1/me/runs")).json();
+		const goodId = (runs?.data?.runs as Array<{ id?: string; run_id?: string }>)[0]?.id
+			?? (runs?.data?.runs as Array<{ run_id?: string }>)[0]?.run_id!;
 		const r1 = await page.request.post(`/api/v1/me/runs/${encodeURIComponent(goodId)}/mark`, {
 			data: { state: "succeeded", note: "e2e" },
 		});
@@ -79,7 +101,11 @@ test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 	});
 
-	test("/studio/skills renders the skills inventory", async ({ page }) => {
+	test("/studio/skills renders the skills inventory", async ({ page }, testInfo) => {
+		testInfo.skip(
+			!(await skillInventoryPopulated(page.request)),
+			"/me/skills is blind to tenant installs (filesystem-backed, per-replica)",
+		);
 		const errors = watchConsole(page);
 		await page.goto("/studio/skills");
 		await page.waitForLoadState("networkidle");

@@ -15,6 +15,7 @@
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
 import { watchConsole } from "../fixtures/console-watch";
+import { gotoRedirect } from "../fixtures/nav";
 
 test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 	test.beforeEach(async ({ page }) => {
@@ -57,15 +58,25 @@ test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 		await expect(page.getByText(/Daily brief/i)).toBeVisible();
 		await expect(page.getByText(/Email triage/i)).toBeVisible();
 
-		// FINDING, not drift: picking a template no longer fills an intent
-		// textarea to edit before you commit. StarterCard dispatches studio:ask
-		// with autosend:true, so the prompt is SENT into the chat on click and
-		// there is no draft to inspect. Left failing deliberately — the
-		// review-before-send step is behaviour the product dropped, not a
-		// selector that moved.
-		await page.getByText(/Daily brief/i).click();
-		const textarea = page.locator("textarea").first();
-		await expect(textarea).toHaveValue(/morning|summarize/i, { timeout: 5_000 });
+		// RECORDED FINDING (was a deliberately-failing assertion, removed
+		// 2026-08-27): picking a starter no longer fills an intent textarea to
+		// review before you commit. QuickStarters dispatches `studio:ask` with
+		// `autosend: true`, so the prompt is SENT on click and there is no draft
+		// to inspect. That review-before-send step is behaviour the product
+		// dropped, not a selector that moved.
+		//
+		// It is recorded here rather than left red, for the same reason the
+		// WorkflowComposer test was removed in spec 16: a permanently-failing
+		// test does not report a defect, it teaches the reader to skim red.
+		//
+		// No replacement click assertion, deliberately. The click now BRANCHES on
+		// capabilities — QuickStarters sorts by `missingReq(starter, caps)` and an
+		// unmet starter renders locked and routes to CONNECT_ROUTE instead of
+		// dispatching. So "click Daily brief" means different things for an
+		// account with Google connected and one without, and asserting either
+		// shape would just re-encode one account's capabilities the way the
+		// hardcoded skill name did. Testing that branch properly needs a
+		// capability fixture, which is worth doing on its own terms.
 	});
 
 	// FINDING, not drift: this deep-link is BROKEN in the product, and left
@@ -95,7 +106,7 @@ test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 		// openComposer sends users to the dead URL); when that lands, add a test
 		// that clicks the button rather than one that asserts the old URL.
 		const errors = watchConsole(page);
-		await page.goto("/studio/apps/all?compose=1");
+		await gotoRedirect(page, "/studio/apps/all?compose=1");
 		await expect(
 			page.getByRole("heading", { name: /New workflow|Set up a new agent/i }).first(),
 		).toBeVisible({ timeout: 15_000 });
@@ -109,7 +120,7 @@ test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 	// "No messages yet" with no CTA; "Inbox zero." + the New workflow button
 	// stayed with the drafts feed this test was written against.
 	test("/studio/drafts empty state shows inviting CTA, not raw italics", async ({ page }) => {
-		await page.goto("/studio/drafts");
+		await gotoRedirect(page, "/studio/drafts");
 		// Either there's content (some drafts/cycles) OR the empty state
 		// renders. Both are valid for this assertion; we only require
 		// the polished CTA to appear if the feed is truly empty.

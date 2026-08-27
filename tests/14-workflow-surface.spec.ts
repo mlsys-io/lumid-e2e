@@ -12,10 +12,18 @@
 
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
+import { ensureSeedApp } from "../fixtures/seed-app";
+import { gotoRedirect } from "../fixtures/nav";
 
 test.describe("14 — workflow surface (W1)", () => {
-	test.beforeEach(async ({ page }) => {
+	// Seed before asserting on collections. Written against an account that
+	// already had apps installed, these failed on empty arrays for anyone else --
+	// which describes the author's account, not the product.
+	let seeded = false;
+	test.beforeEach(async ({ page }, testInfo) => {
 		await loginAsAdmin(page);
+		if (!seeded) seeded = await ensureSeedApp(page.request);
+		if (!seeded) testInfo.skip(true, "could not seed an installed app for this account");
 	});
 
 	test("/api/v1/me/workflows returns mixed kinds with `kind` populated", async ({ page }) => {
@@ -34,7 +42,7 @@ test.describe("14 — workflow surface (W1)", () => {
 	});
 
 	test("/studio/workflows redirects to Home (apps)", async ({ page }) => {
-		await page.goto("/studio/workflows");
+		await gotoRedirect(page, "/studio/workflows");
 		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 	});
 

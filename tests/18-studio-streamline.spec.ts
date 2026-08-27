@@ -15,10 +15,17 @@
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
 import { watchConsole } from "../fixtures/console-watch";
+import { ensureSeedApp, skillInventoryPopulated, SEED_APP } from "../fixtures/seed-app";
+import { gotoRedirect } from "../fixtures/nav";
 
 test.describe("18 — studio streamline", () => {
-	test.beforeEach(async ({ page }) => {
+	// /me/skills and /me/experiments assert on non-empty collections, which only
+	// held for an account that already had apps installed.
+	let seeded = false;
+	test.beforeEach(async ({ page }, testInfo) => {
 		await loginAsAdmin(page);
+		if (!seeded) seeded = await ensureSeedApp(page.request);
+		if (!seeded) testInfo.skip(true, "could not seed an installed app for this account");
 	});
 
 	// Asserted Apps · Library · Jobs; StudioShell's TOP_NAV is Data · Library ·
@@ -78,7 +85,14 @@ test.describe("18 — studio streamline", () => {
 		}
 	});
 
-	test("/me/skills inventory inverts skill_imports into used_by", async ({ page }) => {
+	test("/me/skills inventory inverts skill_imports into used_by", async ({ page }, testInfo) => {
+		// Skipped, not failed, when the inventory is empty: /me/skills walks the
+		// filesystem and cannot see a tenant install — the account IS seeded.
+		// See fixtures/seed-app.ts::skillInventoryPopulated for the evidence.
+		testInfo.skip(
+			!(await skillInventoryPopulated(page.request)),
+			"/me/skills is blind to tenant installs (filesystem-backed, per-replica)",
+		);
 		const r = await page.request.get("/api/v1/me/skills");
 		expect(r.ok()).toBeTruthy();
 		const body = await r.json();
@@ -106,7 +120,13 @@ test.describe("18 — studio streamline", () => {
 		}
 	});
 
-	test("skills + experiments tabs render", async ({ page }) => {
+	test("skills + experiments tabs render", async ({ page }, testInfo) => {
+		// "Installed" only renders when the inventory is non-empty, which the
+		// filesystem-backed endpoint cannot report for a tenant install.
+		testInfo.skip(
+			!(await skillInventoryPopulated(page.request)),
+			"/me/skills is blind to tenant installs (filesystem-backed, per-replica)",
+		);
 		await page.goto("/studio/library/skills");
 		await expect(page.getByText(/Installed/i).first()).toBeVisible({ timeout: 15_000 });
 		await page.goto("/studio/library/experiments");
@@ -153,11 +173,17 @@ test.describe("18 — studio streamline", () => {
 		// as chat grounding. OpenAppRedirect now sends the bare route to the app
 		// WORKSPACE instead — same 3-panel destination, and the grounded chat is
 		// the docked right rail there rather than the whole page.
-		await page.goto("/studio/a/mbb-ai");
-		await expect(page).toHaveURL(/\/studio\/apps\/mbb-ai/, { timeout: 10_000 });
+		// Uses the SEEDED app, not a hardcoded `mbb-ai`. /studio/apps/<app>
+		// self-redirects to /studio when the account does not have that app, so
+		// naming someone else's app made this assert on a redirect chain that
+		// ends nowhere -- it landed on /studio, which is correct behaviour for an
+		// app you have not installed.
+		const app = SEED_APP.name;
+		await gotoRedirect(page, `/studio/a/${app}`);
+		await expect(page).toHaveURL(new RegExp(`/studio/apps/${app}`), { timeout: 10_000 });
 		// The full standalone page is still reachable explicitly.
-		await page.goto("/studio/a/mbb-ai?full=1");
-		await expect(page).toHaveURL(/\/studio\/a\/mbb-ai\?full=1/, { timeout: 10_000 });
+		await gotoRedirect(page, `/studio/a/${app}?full=1`);
+		await expect(page).toHaveURL(new RegExp(`/studio/a/${app}\\?full=1`), { timeout: 10_000 });
 	});
 
 	test("chat can operate apps: app_read is callable on the standard path", async ({ page }) => {
@@ -177,6 +203,11 @@ test.describe("18 — studio streamline", () => {
 		// specs assert on. super_admin's default is claude-code-sonnet, so an
 		// unpinned call asks an agent that genuinely lacks the tool to use it.
 		const r = await page.request.post("/api/v1/me/agent/chat", {
+			// The comment above describes a 290s budget, but this call never set
+			// one -- so it failed on Playwright's 15s default rather than on
+			// anything the product did. Its sibling agentic tests in this file
+			// already pass it; this one was missed.
+			timeout: 290_000,
 			data: {
 				model: "kvrun-gemma4",
 				messages: [{ role: "user", content: "Call app_read with source me://gpu-rentals and report the count. One sentence." }],
@@ -190,9 +221,9 @@ test.describe("18 — studio streamline", () => {
 	});
 
 	test("dead routes redirect home", async ({ page }) => {
-		await page.goto("/studio/mind");
+		await gotoRedirect(page, "/studio/mind");
 		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
-		await page.goto("/studio/workflows");
+		await gotoRedirect(page, "/studio/workflows");
 		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
 	});
 });
