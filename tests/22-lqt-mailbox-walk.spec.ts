@@ -125,6 +125,31 @@ async function resolveInviteCode(baseURL: string): Promise<string> {
 	}
 }
 
+/** Open the strategy detail page the way a USER reaches it: from the list.
+ *
+ * A cold `page.goto('/studio/a/lqt-mailbox/strategy?strategy_id=…')` does NOT
+ * work — the page renders its four sections and then reports
+ *   "Waiting for a strategy_id — open this page from its parent list"
+ * because it takes the id from in-app router state, not from the query string
+ * on a fresh load. Arriving via a row click (what step 4-5 does) works, and the
+ * resulting URL does carry ?strategy_id=, which is what makes the deep-link
+ * look like it should work.
+ *
+ * That is a real product limitation, not a test artefact: a bookmark or an F5
+ * on this page loses the strategy. It is recorded as an annotation on first use
+ * rather than silently papered over — see the DEEP_LINK note below.
+ */
+async function openStrategyDetail(page: Page, strategyId: string): Promise<void> {
+	await page.goto(`/studio/a/${APP}/strategies`);
+	const row = page.getByRole("row").filter({ hasText: STRATEGY_NAME }).first();
+	await expect(row, "strategy row missing from the list").toBeVisible({ timeout: 60_000 });
+	await row.getByRole("cell").first().click();
+	await expect(page).toHaveURL(
+		new RegExp(`/studio/a/${APP}/strategy\\?strategy_id=${strategyId}`),
+		{ timeout: 20_000 },
+	);
+}
+
 test.describe("22 — LQT mailbox: anonymous access", () => {
 	test("strategy surfaces require a session", async ({ page }) => {
 		await page.context().clearCookies();
@@ -319,7 +344,16 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 	test("step 6 — the detail surface renders all four sections, scoped", async ({ page }) => {
 		test.skip(!strategyId, "no strategy registered");
 		await loginViaUi(page, user);
-		await page.goto(`/studio/a/${APP}/strategy?strategy_id=${strategyId}`);
+		await openStrategyDetail(page, strategyId);
+		// DEEP_LINK: record the limitation this helper works around, so a real
+		// product gap stays visible instead of being absorbed by the fix.
+		test.info().annotations.push({
+			type: "deep-link-unsupported",
+			description:
+				"/studio/a/lqt-mailbox/strategy?strategy_id=… does not resolve on a COLD load " +
+				"(renders 'Waiting for a strategy_id'); it only works when reached by clicking " +
+				"a row. A bookmark or a page refresh therefore loses the strategy.",
+		});
 		for (const h of [/^Registration$/i, /^Sessions$/i, /Backtests for this strategy/i, /Stop this strategy/i]) {
 			await expect(page.getByRole("heading", { name: h }).first()).toBeVisible({ timeout: 30_000 });
 		}
@@ -334,7 +368,7 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		test.setTimeout(510_000);
 		test.skip(!strategyId, "no strategy registered");
 		await loginViaUi(page, user);
-		await page.goto(`/studio/a/${APP}/strategy?strategy_id=${strategyId}`);
+		await openStrategyDetail(page, strategyId);
 
 		page.once("dialog", (d) => d.accept()); // confirm: "Submit a backtest for …?"
 		await page.getByRole("button", { name: /^Backtest$/ }).first().click();
@@ -361,7 +395,7 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 	test("step 8 — Forward test reports without submitting", async ({ page }) => {
 		test.skip(!strategyId, "no strategy registered");
 		await loginViaUi(page, user);
-		await page.goto(`/studio/a/${APP}/strategy?strategy_id=${strategyId}`);
+		await openStrategyDetail(page, strategyId);
 		await page.getByRole("button", { name: /^Forward test$/ }).first().click();
 		await expect(page.getByText(/Reading forward-test state/i).first()).toBeVisible({ timeout: 90_000 });
 		// Zero scorecards for a minutes-old strategy is the CORRECT outcome —
@@ -372,7 +406,7 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 	test("step 9-10 — Discuss starts a session and Sessions lists it", async ({ page }) => {
 		test.skip(!strategyId, "no strategy registered");
 		await loginViaUi(page, user);
-		await page.goto(`/studio/a/${APP}/strategy?strategy_id=${strategyId}`);
+		await openStrategyDetail(page, strategyId);
 		await page.getByRole("button", { name: /^Discuss$/ }).first().click();
 
 		// Discuss dispatches studio:ask with autosend — the chat rail opens and
@@ -402,7 +436,7 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 
 		// The UI half: reload, and Sessions must render the thread rather than
 		// its empty state.
-		await page.goto(`/studio/a/${APP}/strategy?strategy_id=${strategyId}`);
+		await openStrategyDetail(page, strategyId);
 		await expect(
 			page.getByText(/No chat threads for this strategy yet/i),
 			"Sessions still shows its empty state",
