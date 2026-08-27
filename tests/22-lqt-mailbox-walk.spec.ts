@@ -68,7 +68,24 @@ const STRATEGY_SRC = [
 ].join("\n");
 
 async function loginViaUi(page: Page, user: TestUser): Promise<void> {
+	// The login SPA intermittently renders with NO inputs at all — measured
+	// 2026-08-26: a direct /auth/login showed `inputs=0` after 60s once, then
+	// 2 inputs on every retry seconds later. It is environmental (cold pods
+	// after a rollout, or load), not a product break, and it is the single
+	// most misleading failure in this file: whichever step happens to own the
+	// login dies on `waiting for getByLabel(/email/i)` and gets blamed for a
+	// surface it never reached. Seen attributed to step 2, step 4-5 and step 6
+	// on consecutive runs of an unchanged app.
+	//
+	// One reload, then fail with a message that names the real cause.
 	await page.goto("/auth/login");
+	if (!(await page.getByLabel(/email/i).count().catch(() => 0))) {
+		await page.reload();
+	}
+	await expect(
+		page.getByLabel(/email/i).first(),
+		"login form never rendered (SPA did not hydrate) — NOT a failure of the step reporting it",
+	).toBeVisible({ timeout: 30_000 });
 	await page.getByLabel(/email/i).fill(user.email);
 	await page.getByLabel(/password/i, { exact: false }).first().fill(user.password);
 	await page.getByRole("button", { name: /sign in/i }).click();
@@ -164,6 +181,16 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 
 	let user: TestUser;
 	let strategyId = "";
+	// ONE page, ONE login for the whole walk.
+	//
+	// Every step used to call loginViaUi, so a 7-step run did 7 full logins in
+	// a couple of minutes. Under that load the login form intermittently had
+	// not rendered when `fill` ran, and the step died on
+	// `waiting for getByLabel(/email/i)` — reported against whichever step drew
+	// the short straw (seen on step 2 and step 6 in consecutive runs), which
+	// reads as a product regression in a part of the app the step never
+	// reached. Spec 23 hit the identical thing; same fix.
+	let page: Page;
 
 	test.beforeAll(async ({}, testInfo) => {
 		if (!WALK_ENABLED) testInfo.skip(true, "LUMID_E2E_LQT_WALK=0");
@@ -223,8 +250,24 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		});
 	});
 
-	test("step 2 — install lqt-mailbox from the marketplace", async ({ page }) => {
+	test.beforeAll(async ({ browser }, testInfo) => {
+		// newContext({baseURL}), NOT browser.newPage(): a bare newPage does not
+		// inherit `use.baseURL` from the project, and every helper here navigates
+		// with a RELATIVE path ("/auth/login", "/studio/a/..."). Without it the
+		// login goto resolves nowhere and the hook dies on
+		// `waiting for getByLabel(/email/i)` — reported against the FIRST test in
+		// the block, which is why a beforeAll problem looked like step 2 failing.
+		const baseURL = testInfo.project.use.baseURL ?? process.env.BASE_URL ?? "https://lum.id";
+		const ctx = await browser.newContext({ baseURL });
+		page = await ctx.newPage();
 		await loginViaUi(page, user);
+	});
+
+	test.afterAll(async () => {
+		await page?.context().close();
+	});
+
+	test("step 2 — install lqt-mailbox from the marketplace", async () => {
 
 		// Already installed ⇒ nothing to do. With E2E_USER_EMAIL the account is
 		// a real, reused one that very likely already has the app, and the
@@ -307,13 +350,12 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 			.toBe(true);
 	});
 
-	test("step 4-5 — deploy a strategy and see it register", async ({ page }) => {
+	test("step 4-5 — deploy a strategy and see it register", async () => {
 		// The registry row below is given 240s because it waits on a real
 		// mailbox round-trip; the suite default is 60s, so without this the
 		// test dies at 60s and reports "the strategy never registered" —
 		// a budget failure wearing a product failure's error message.
 		test.setTimeout(330_000);
-		await loginViaUi(page, user);
 		await page.goto(`/studio/a/${APP}/strategies`);
 		await expect(page.getByRole("heading", { name: /Deploy a strategy/i }).first()).toBeVisible({
 			timeout: 30_000,
@@ -342,9 +384,8 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		expect(strategyId, "row_href carried no strategy_id").not.toBe("");
 	});
 
-	test("step 6 — the detail surface renders all four sections, scoped", async ({ page }) => {
+	test("step 6 — the detail surface renders all four sections, scoped", async () => {
 		test.skip(!strategyId, "no strategy registered");
-		await loginViaUi(page, user);
 		await openStrategyDetail(page, strategyId);
 		// The `Waiting for a strategy_id` state this used to hit was NOT a
 		// deep-link limitation, which is what it looked like at first: AppSurface
@@ -366,12 +407,11 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		await expect(page.getByText(strategyId).first()).toBeVisible({ timeout: 30_000 });
 	});
 
-	test("step 7 — Backtest opens a claim and produces a run row", async ({ page }) => {
+	test("step 7 — Backtest opens a claim and produces a run row", async () => {
 		// Claim → scheduler → run row is the slowest hop in the walk (420s poll
 		// below); same budget trap as step 4-5.
 		test.setTimeout(510_000);
 		test.skip(!strategyId, "no strategy registered");
-		await loginViaUi(page, user);
 		await openStrategyDetail(page, strategyId);
 
 		page.once("dialog", (d) => d.accept()); // confirm: "Submit a backtest for …?"
@@ -396,9 +436,8 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 			.toBeGreaterThan(0);
 	});
 
-	test("step 8 — Forward test reports without submitting", async ({ page }) => {
+	test("step 8 — Forward test reports without submitting", async () => {
 		test.skip(!strategyId, "no strategy registered");
-		await loginViaUi(page, user);
 		await openStrategyDetail(page, strategyId);
 		await page.getByRole("button", { name: /^Forward test$/ }).first().click();
 		await expect(page.getByText(/Reading forward-test state/i).first()).toBeVisible({ timeout: 90_000 });
@@ -407,9 +446,8 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		await expect(page.getByText(/failed|error/i).first()).toBeHidden({ timeout: 5_000 });
 	});
 
-	test("step 9-10 — Discuss starts a session and Sessions lists it", async ({ page }) => {
+	test("step 9-10 — Discuss starts a session and Sessions lists it", async () => {
 		test.skip(!strategyId, "no strategy registered");
-		await loginViaUi(page, user);
 		await openStrategyDetail(page, strategyId);
 		await page.getByRole("button", { name: /^Discuss$/ }).first().click();
 
