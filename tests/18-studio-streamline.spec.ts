@@ -2,12 +2,13 @@
 // (2026-06-13): every nav destination is a light list whose rows open
 // the grounded chat; dense panels survive as "details →" escape hatches.
 //
-//   1. Sidebar shape (claude.ai layout): Apps · Library · Jobs;
+//   1. Sidebar shape (claude.ai layout): Data · Library · Scheduled;
 //      /studio itself is the AI chat (greeting + composer card).
-//   2. Apps is a light index (clickable rows), not a stat-chip dashboard.
+//   2. /studio/apps/all is a light index (clickable rows), not a stat-chip
+//      dashboard. (/studio/apps is the workspace now, not the index.)
 //   3. /me/skills returns the inventory with used_by inversion.
 //   4. /me/experiments aggregates cross-app with `app` annotated.
-//   5. Opening an app row lands in the chat (/studio).
+//   5. Opening an app row lands in that app's workspace (/studio/apps/:app).
 //   6. Chat tools: loops_health + cycle_detail are callable.
 //   7. Dead routes redirect: /studio/mind, /studio/workflows.
 
@@ -19,9 +20,16 @@ test.describe("18 — studio streamline", () => {
 		await loginAsAdmin(page);
 	});
 
-	test("sidebar has the consolidated nav (Apps · Library · Jobs)", async ({ page }) => {
+	// Asserted Apps · Library · Jobs; StudioShell's TOP_NAV is Data · Library ·
+	// Scheduled. "Apps" left the rail when every installed app got its own
+	// folder in the pinned "Your Apps" section — the flat index it used to open
+	// now lives at /studio/apps/all, reached from the user menu's "Manage apps".
+	// The runs destination is still there, labelled "Scheduled" in the rail;
+	// "Jobs" survives only as that page's own IndexList title, which is what
+	// this was matching before the rail was relabelled.
+	test("sidebar has the consolidated nav (Data · Library · Scheduled)", async ({ page }) => {
 		await page.goto("/studio/apps");
-		for (const label of ["Apps", "Library", "Jobs"]) {
+		for (const label of ["Data", "Library", "Scheduled"]) {
 			await expect(page.getByRole("link", { name: new RegExp(`^${label}`) }).first()).toBeVisible({ timeout: 15_000 });
 		}
 	});
@@ -32,15 +40,24 @@ test.describe("18 — studio streamline", () => {
 		await expect(page.getByPlaceholder(/Ask anything/)).toBeVisible();
 	});
 
-	test("Apps is a light index whose title is 'Apps' and rows open the chat", async ({ page }) => {
-		await page.goto("/studio/apps");
+	// The index moved out from under /studio/apps. That path is now
+	// StudioWorkspace (one featured app · details · docked chat) and it
+	// replaces itself with /studio/apps/<app> on mount, so the flat list never
+	// renders there — it is /studio/apps/all now. The title moved with it:
+	// AppsHome renders IndexList title="Agents" after the Phase 4 app→agent
+	// rename, so "Apps" matches no heading anywhere.
+	test("the agent index is a light list whose rows open the app", async ({ page }) => {
+		await page.goto("/studio/apps/all");
 		// Serif page title, not a stat-chip hero.
-		await expect(page.getByRole("heading", { name: "Apps" })).toBeVisible({ timeout: 15_000 });
-		// First app row → grounded chat (with pref=ask it autosends and lands on /studio).
+		await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible({ timeout: 15_000 });
+		// A row used to fire the grounded ask and land you on /studio. IndexRow
+		// grew a `navTo` that apps set, so the PRIMARY click now opens the app's
+		// own workspace and the grounded ask demoted to the hover-only "ask"
+		// affordance on the row. Same rows, different destination.
 		const row = page.getByRole("button").filter({ hasText: /healthy|failing|running|idle/ }).first();
 		if (await row.count()) {
 			await row.click();
-			await expect(page).toHaveURL(/\/studio(\?|$)/, { timeout: 10_000 });
+			await expect(page).toHaveURL(/\/studio\/apps\/(?!all(\?|$))[^/]+/, { timeout: 10_000 });
 		}
 	});
 
@@ -86,12 +103,31 @@ test.describe("18 — studio streamline", () => {
 		await page.goto("/studio/library/skills");
 		await expect(page.getByText(/Installed/i).first()).toBeVisible({ timeout: 15_000 });
 		await page.goto("/studio/library/experiments");
-		await expect(page.getByText(/Experiments \(/i).first()).toBeVisible({ timeout: 15_000 });
+		// Was /Experiments \(/ — the count in parens went away when the page was
+		// ported onto the shared IndexList, which renders a bare `title` heading
+		// ("Experiments") and puts the row count nowhere. Assert the heading so
+		// this can't pass on the nav tab of the same name.
+		await expect(page.getByRole("heading", { name: "Experiments" })).toBeVisible({ timeout: 15_000 });
 	});
 
 	test("chat tools loops_health + cycle_detail are callable", async ({ page }) => {
+		// A real budget, and a pinned model.
+		//
+		// Playwright's default request timeout is 15s; an agentic turn here
+		// legitimately runs 15-170s, so these failed on the harness's clock
+		// rather than on anything the product did. 290s stays under nginx's
+		// 300s proxy_read_timeout for /api/v1/me/, so a genuine overrun still
+		// surfaces as a 504 instead of being masked.
+		//
+		// The model is pinned because the tool CATALOG depends on the
+		// provider: claude-code-* runs the turn as a subprocess in the sandbox
+		// with the lumid MCP surface and NONE of the identity-side tools these
+		// specs assert on. super_admin's default is claude-code-sonnet, so an
+		// unpinned call asks an agent that genuinely lacks the tool to use it.
 		const r = await page.request.post("/api/v1/me/agent/chat", {
+			timeout: 290_000,
 			data: {
+				model: "deepseek-v4-flash",
 				messages: [{
 					role: "user",
 					content: "Call loops_health and tell me which workflow has the most consecutive failures. One sentence.",
@@ -105,10 +141,13 @@ test.describe("18 — studio streamline", () => {
 		expect(toolCalls.some((tc) => tc.name === "loops_health" && tc.ok)).toBeTruthy();
 	});
 
-	test("app surfaces open in chat; ?full=1 is the escape hatch", async ({ page }) => {
-		// Opening an app surface drops into the grounded chat (deeper migration).
+	test("app surfaces open in the workspace; ?full=1 is the escape hatch", async ({ page }) => {
+		// Opening an app surface used to drop you on /studio with the app stashed
+		// as chat grounding. OpenAppRedirect now sends the bare route to the app
+		// WORKSPACE instead — same 3-panel destination, and the grounded chat is
+		// the docked right rail there rather than the whole page.
 		await page.goto("/studio/a/mbb-ai");
-		await expect(page).toHaveURL(/\/studio(\?|$)/, { timeout: 10_000 });
+		await expect(page).toHaveURL(/\/studio\/apps\/mbb-ai/, { timeout: 10_000 });
 		// The full standalone page is still reachable explicitly.
 		await page.goto("/studio/a/mbb-ai?full=1");
 		await expect(page).toHaveURL(/\/studio\/a\/mbb-ai\?full=1/, { timeout: 10_000 });
@@ -117,6 +156,19 @@ test.describe("18 — studio streamline", () => {
 	test("chat can operate apps: app_read is callable on the standard path", async ({ page }) => {
 		// Force a kv.run model so the request uses the me_agent tool path
 		// (the claude-code provider bypasses these tools).
+		// A real budget, and a pinned model.
+		//
+		// Playwright's default request timeout is 15s; an agentic turn here
+		// legitimately runs 15-170s, so these failed on the harness's clock
+		// rather than on anything the product did. 290s stays under nginx's
+		// 300s proxy_read_timeout for /api/v1/me/, so a genuine overrun still
+		// surfaces as a 504 instead of being masked.
+		//
+		// The model is pinned because the tool CATALOG depends on the
+		// provider: claude-code-* runs the turn as a subprocess in the sandbox
+		// with the lumid MCP surface and NONE of the identity-side tools these
+		// specs assert on. super_admin's default is claude-code-sonnet, so an
+		// unpinned call asks an agent that genuinely lacks the tool to use it.
 		const r = await page.request.post("/api/v1/me/agent/chat", {
 			data: {
 				model: "kvrun-gemma4",

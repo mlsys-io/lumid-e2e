@@ -3,6 +3,7 @@
 // Cases:
 //   1. Chat `compose_workflow` returns a staged draft with picked skills.
 //   2. /studio/workflows shows a "New workflow" button that opens the composer.
+//      KNOWN FAILING past the redirect — that composer was retired; see the test.
 //   3. /studio/mind page renders for an admin.
 //   4. /api/v1/me/mind/workflow/:slug returns deltas.
 //   5. /api/v1/skills/catalog cards include kind + step_count.
@@ -17,8 +18,23 @@ test.describe("15 — Create + Improve surfaces (W2-W4)", () => {
 	});
 
 	test("chat compose_workflow drafts a workflow + picks skills", async ({ page }) => {
+		// A real budget, and a pinned model.
+		//
+		// Playwright's default request timeout is 15s; an agentic turn here
+		// legitimately runs 15-170s, so these failed on the harness's clock
+		// rather than on anything the product did. 290s stays under nginx's
+		// 300s proxy_read_timeout for /api/v1/me/, so a genuine overrun still
+		// surfaces as a 504 instead of being masked.
+		//
+		// The model is pinned because the tool CATALOG depends on the
+		// provider: claude-code-* runs the turn as a subprocess in the sandbox
+		// with the lumid MCP surface and NONE of the identity-side tools these
+		// specs assert on. super_admin's default is claude-code-sonnet, so an
+		// unpinned call asks an agent that genuinely lacks the tool to use it.
 		const r = await page.request.post("/api/v1/me/agent/chat", {
+			timeout: 290_000,
 			data: {
+				model: "deepseek-v4-flash",
 				messages: [{
 					role: "user",
 					content: "Use compose_workflow to draft: watch my email and draft replies twice a day. for_app=personal-agent",
@@ -38,6 +54,17 @@ test.describe("15 — Create + Improve surfaces (W2-W4)", () => {
 		expect(composeCall!.result.skills_picked.length).toBeGreaterThan(0);
 	});
 
+	// The redirect half is correct and verified against App.tsx
+	// (WorkflowsListRedirect → /studio/apps, query preserved). Everything after
+	// it is a FINDING, not drift, and is left failing on purpose: /studio/apps
+	// is StudioWorkspace now and carries no "New workflow" button -- the
+	// affordance survives as a LINK on the app surface (and inside the workflow
+	// selector's popover), and both go to /studio/a/<app>/manage, not to a
+	// composer. The two-tab modal itself is gone: "Design visually" exists
+	// nowhere in the bundle (the visual builder proxied to n8n, which is dead),
+	// and "Describe what you want" is now a starter tile in QuickStarters, not a
+	// tab. Composition moved into the chat — compose_workflow renders inline as
+	// an AssemblyCard instead of popping this modal.
 	test("/studio/workflows redirects Home; New workflow opens composer", async ({ page }) => {
 		await page.goto("/studio/workflows");
 		await expect(page).toHaveURL(/\/studio\/apps/, { timeout: 10_000 });
@@ -82,8 +109,23 @@ test.describe("15 — Create + Improve surfaces (W2-W4)", () => {
 	});
 
 	test("chat workflow_report_card invokes the tool", async ({ page }) => {
+		// A real budget, and a pinned model.
+		//
+		// Playwright's default request timeout is 15s; an agentic turn here
+		// legitimately runs 15-170s, so these failed on the harness's clock
+		// rather than on anything the product did. 290s stays under nginx's
+		// 300s proxy_read_timeout for /api/v1/me/, so a genuine overrun still
+		// surfaces as a 504 instead of being masked.
+		//
+		// The model is pinned because the tool CATALOG depends on the
+		// provider: claude-code-* runs the turn as a subprocess in the sandbox
+		// with the lumid MCP surface and NONE of the identity-side tools these
+		// specs assert on. super_admin's default is claude-code-sonnet, so an
+		// unpinned call asks an agent that genuinely lacks the tool to use it.
 		const r = await page.request.post("/api/v1/me/agent/chat", {
+			timeout: 290_000,
 			data: {
+				model: "deepseek-v4-flash",
 				messages: [{
 					role: "user",
 					content: "Use workflow_report_card on personal-agent:morning_brief.",

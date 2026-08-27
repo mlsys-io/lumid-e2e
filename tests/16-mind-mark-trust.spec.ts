@@ -7,6 +7,7 @@
 //   4. /studio/mind Advanced section toggles + renders the plot.
 //   5. /studio/skills composer has the verified-only toggle.
 //   6. WorkflowComposer modal supports both Describe and Visual tabs (no regression).
+//      KNOWN FAILING — that composer was retired; see the finding on the test.
 
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
@@ -67,6 +68,17 @@ test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 		await expect(page.getByText(/Installed/i).first()).toBeVisible({ timeout: 15_000 });
 	});
 
+	// FINDING, not drift: left failing on purpose. This guarded a two-tab
+	// composer that no longer exists in any form. "Design visually" is gone from
+	// the whole bundle -- the visual builder proxied to n8n, and that upstream is
+	// dead. "Describe what you want" survives only as the free-form tile in the
+	// QuickStarters launcher, which is a starter card, not a composer tab. The
+	// modal it was guarding (components/WorkflowComposer.tsx) is now unimported
+	// dead code; the surviving guided flow is NewWorkflowFlow (Goal → Data →
+	// Pipeline → Create), and creation otherwise happens inline in the chat as an
+	// AssemblyCard or per-app under /studio/a/<app>/manage. There is also no
+	// "New workflow" button on /studio/apps to click: the affordance is a LINK
+	// on the app surface and it goes to that app's Manage panel.
 	test("WorkflowComposer modal — both tabs present (regression)", async ({ page }) => {
 		await page.goto("/studio/apps");
 		await page.getByRole("button", { name: /New workflow/i }).click();
