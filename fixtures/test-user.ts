@@ -45,6 +45,17 @@ export async function createUser(
 		: taggedAddress(tag);
 	const password = opts.password || `Lumid-e2e-${rand()}!`;
 	const username = opts.username || `e2e-${tag}`;
+	// Default the invitation code from the environment rather than requiring
+	// every caller to remember it.
+	//
+	// Registration SUCCEEDS without a code, which is why this was invisible:
+	// the account is created and verified, and only then does AuthGuard
+	// force-redirect any non-admin with an empty invitation_code to
+	// /auth/redeem-invite (components/auth-guard.tsx). So a code-less fixture
+	// user looks fine at the API and is unusable in the browser — spec 05
+	// failed on exactly that, landing at /auth/redeem-invite?return_to=%2Fstudio
+	// instead of the account page, the first time it was ever allowed to run.
+	const invitationCode = opts.invitationCode || process.env.E2E_INVITATION_CODE || "";
 
 	const api = await request.newContext({ baseURL });
 	try {
@@ -75,7 +86,7 @@ export async function createUser(
 				password,
 				name: username,
 				verification_code: code,
-				...(opts.invitationCode ? { invitation_code: opts.invitationCode } : {}),
+				...(invitationCode ? { invitation_code: invitationCode } : {}),
 			},
 			headers: { "Content-Type": "application/json" },
 		});

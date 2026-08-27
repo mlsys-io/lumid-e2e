@@ -1,5 +1,15 @@
 import { test, expect, type BrowserContext } from "@playwright/test";
 import { createUser } from "../fixtures/test-user";
+import { localOtpEnabled } from "../fixtures/otp-redis";
+
+// Where a successful sign-in lands. Role-dependent since the S5 cutover:
+// admins go to /dashboard, regular users to /studio; /account/* is the older
+// path, kept so this still passes wherever it survives. Same set
+// fixtures/admin-session.ts already waits on — these specs were written when
+// /account was the only answer and asserted it literally, which is why a
+// role=user landing on /studio read as a failure.
+const POST_LOGIN_URL = /\/dashboard|\/studio|\/account(\/|$)/;
+
 
 // Journey 6 — changing the password should sign out every OTHER
 // device for the same account but keep THIS device authed.
@@ -13,7 +23,9 @@ test.describe("06 — change password revokes other sessions", () => {
 	let user: { email: string; password: string; username: string };
 
 	test.beforeAll(async ({ baseURL }, testInfo) => {
-		if (!process.env.E2E_GMAIL_APP_PASSWORD) testInfo.skip(true, "E2E_GMAIL_APP_PASSWORD not set");
+		if (!localOtpEnabled() && !process.env.E2E_GMAIL_APP_PASSWORD) {
+			testInfo.skip(true, "no OTP source: set E2E_GMAIL_APP_PASSWORD, or CI_E2E_LOCAL_OTP=1 for the Redis backdoor");
+		}
 		if (!process.env.E2E_INVITATION_CODE) testInfo.skip(true, "E2E_INVITATION_CODE not set");
 		user = await createUser(baseURL!, { tag: `chpw-${Date.now().toString(36)}` });
 	});
@@ -60,7 +72,7 @@ test.describe("06 — change password revokes other sessions", () => {
 			await pageB.locator("#email").fill(user.email);
 			await pageB.locator("#password").fill(newPassword);
 			await pageB.getByRole("button", { name: /sign in/i }).click();
-			await expect(pageB).toHaveURL(/\/account(\/|$)/);
+			await expect(pageB).toHaveURL(POST_LOGIN_URL);
 		} finally {
 			await ctxA.close();
 			await ctxB.close();
@@ -78,6 +90,6 @@ async function loginThrough(
 	await page.locator("#email").fill(email);
 	await page.locator("#password").fill(password);
 	await page.getByRole("button", { name: /sign in/i }).click();
-	await page.waitForURL(/\/account(\/|$)/, { timeout: 15_000 });
+	await page.waitForURL(POST_LOGIN_URL, { timeout: 15_000 });
 	await page.close();
 }
