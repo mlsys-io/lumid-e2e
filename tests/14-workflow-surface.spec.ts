@@ -106,6 +106,17 @@ test.describe("14 — workflow surface (W1)", () => {
 		test.setTimeout(360_000);
 		const r = await page.request.post("/api/v1/me/agent/chat/stream", {
 			data: {
+				// PIN THE MODEL. list_runs is an identity-side tool, and which
+				// catalog a turn gets depends on the provider: the claude-code-*
+				// providers run the turn as a subprocess in the sandbox, where the
+				// tool surface is the lumid MCP server (mcp__lumid__*) and there is
+				// no list_runs at all. super_admin's DEFAULT is claude-code-sonnet,
+				// so this test -- which pinned nothing -- was asking an agent that
+				// genuinely does not have the tool to use it, and correctly got
+				// "I don't have a list_runs tool available in this session".
+				// Verified on a quiet fleet: unpinned -> mcp__lumid__xp_status and
+				// no list_runs; pinned to deepseek-v4-flash -> list_runs called.
+				model: "deepseek-v4-flash",
 				messages: [{ role: "user", content: "What workflows failed today? Use list_runs with state=failed and limit 5." }],
 			},
 			timeout: 330_000,
