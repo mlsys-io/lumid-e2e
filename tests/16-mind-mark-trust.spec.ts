@@ -6,11 +6,28 @@
 //   3. /me/runs/:run_id/mark accepts succeeded + failed; rejects malformed ids.
 //   4. /studio/mind Advanced section toggles + renders the plot.
 //   5. /studio/skills composer has the verified-only toggle.
-//   6. WorkflowComposer modal supports both Describe and Visual tabs (no regression).
-//      KNOWN FAILING — that composer was retired; see the finding on the test.
+//
+// REMOVED 2026-08-27: a test guarding the two-tab WorkflowComposer modal.
+// It was not drift — that composer no longer exists in any form. "Design
+// visually" is gone from the whole bundle (it proxied to n8n, dead cluster-side
+// since the UKS cutover), and components/WorkflowComposer.tsx is now unimported
+// dead code. It was left red "as a finding", which is the wrong instrument: a
+// permanently-failing test does not report a defect, it trains the reader to
+// skim red. The finding is recorded here instead.
+//
+// What replaced it, and the live bug worth fixing: creation now happens inline
+// in chat as an AssemblyCard, or per-app under /studio/a/<app>/manage. The
+// guided NewWorkflowFlow (Goal -> Data -> Pipeline -> Create) still exists but
+// has NO UI entry point — it opens only on ?compose=1 or a studio:new-workflow
+// window event, and the bundle contains zero dispatchers for that event. Worse,
+// ?compose=1 is read by AppsHome at /studio/apps/all, while /studio/apps is
+// StudioWorkspace, which drops the query on its self-redirect. So the product's
+// own "New workflow" button in the drafts empty state goes nowhere. Write the
+// test when the route works; do not keep a red one in the meantime.
 
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
+import { watchConsole } from "../fixtures/console-watch";
 
 test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 	test.beforeEach(async ({ page }) => {
@@ -63,26 +80,11 @@ test.describe("16 — Mind/Mark/Trust polish (W5)", () => {
 	});
 
 	test("/studio/skills renders the skills inventory", async ({ page }) => {
+		const errors = watchConsole(page);
 		await page.goto("/studio/skills");
 		await page.waitForLoadState("networkidle");
 		await expect(page.getByText(/Installed/i).first()).toBeVisible({ timeout: 15_000 });
+		expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
 	});
 
-	// FINDING, not drift: left failing on purpose. This guarded a two-tab
-	// composer that no longer exists in any form. "Design visually" is gone from
-	// the whole bundle -- the visual builder proxied to n8n, and that upstream is
-	// dead. "Describe what you want" survives only as the free-form tile in the
-	// QuickStarters launcher, which is a starter card, not a composer tab. The
-	// modal it was guarding (components/WorkflowComposer.tsx) is now unimported
-	// dead code; the surviving guided flow is NewWorkflowFlow (Goal → Data →
-	// Pipeline → Create), and creation otherwise happens inline in the chat as an
-	// AssemblyCard or per-app under /studio/a/<app>/manage. There is also no
-	// "New workflow" button on /studio/apps to click: the affordance is a LINK
-	// on the app surface and it goes to that app's Manage panel.
-	test("WorkflowComposer modal — both tabs present (regression)", async ({ page }) => {
-		await page.goto("/studio/apps");
-		await page.getByRole("button", { name: /New workflow/i }).click();
-		await expect(page.getByRole("button", { name: /Describe what you want/i })).toBeVisible();
-		await expect(page.getByRole("button", { name: /Design visually/i })).toBeVisible();
-	});
 });

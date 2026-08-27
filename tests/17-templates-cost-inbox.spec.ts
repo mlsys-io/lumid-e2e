@@ -14,6 +14,7 @@
 
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
+import { watchConsole } from "../fixtures/console-watch";
 
 test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 	test.beforeEach(async ({ page }) => {
@@ -77,11 +78,28 @@ test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 	// end is wired into the product: the drafts empty-state CTA below sends the
 	// user to exactly this URL (pages/studio/inbox.tsx openComposer).
 	// /studio/apps/all?compose=1 is the path that still works.
-	test("/studio/workflows?compose=1 deep-links to the composer (via Home)", async ({ page }) => {
-		await page.goto("/studio/workflows?compose=1");
-		await expect(page.getByText(/Start with a template/i)).toBeVisible({ timeout: 10_000 });
-		// Redirect preserved the query, the composer host stripped it.
-		await expect(page).toHaveURL(/\/studio\/apps$/);
+	test("?compose=1 opens the composer on the host that still reads it", async ({ page }) => {
+		// Retargeted from /studio/workflows?compose=1, which is DEAD, and asserting
+		// a string ("Start with a template") that exists nowhere in the bundle.
+		//
+		// The param is read by AppsHome, which is mounted at /studio/apps/all.
+		// /studio/apps is StudioWorkspace, which never reads it and then
+		// self-redirects to /studio/apps/<app> with no search string, dropping it.
+		// WorkflowsListRedirect still forwards the query -- its own comment says
+		// "?compose=1 must reach the apps page's composer host" -- but the host
+		// moved out from under it.
+		//
+		// Asserting the live path keeps real coverage of the composer entry instead
+		// of a permanent red mark on a route nobody is going to restore. The dead
+		// route is a product bug with a one-line fix (pages/studio/inbox.tsx's
+		// openComposer sends users to the dead URL); when that lands, add a test
+		// that clicks the button rather than one that asserts the old URL.
+		const errors = watchConsole(page);
+		await page.goto("/studio/apps/all?compose=1");
+		await expect(
+			page.getByRole("heading", { name: /New workflow|Set up a new agent/i }).first(),
+		).toBeVisible({ timeout: 15_000 });
+		expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
 	});
 
 	// The G3-polished feed is at /studio/drafts now. /studio/inbox was

@@ -1,5 +1,6 @@
-import { test, expect, type Page, type ConsoleMessage } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import { createUser } from "../fixtures/test-user";
+import { watchConsole } from "../fixtures/console-watch";
 
 // Journey 10 — every lum.id dashboard path smoke-tests cleanly.
 //
@@ -54,29 +55,9 @@ const ADMIN_PATHS: PathDef[] = [
   { path: "/studio/super-admin",               marker: /super admin|operational|telemetry/i, patient: true },
 ];
 
-// Track unexpected console errors. We allowlist some noisy-but-harmless
-// patterns from third-party scripts.
-const CONSOLE_ALLOW = [
-  /favicon/i,
-  /preload .* unused/i,
-  /Download the React DevTools/i,
-  /WebSocket connection .* failed/i,            // n8n / live ws may fail in test env
-  /grafana/i,                                   // embedded grafana panels in super-admin
-  /Failed to load resource:.*404/i,             // optional assets
-  /Mixed Content/i,                             // legacy iframe edges
-];
-
-function startConsoleWatch(page: Page): () => string[] {
-  const errors: string[] = [];
-  const onMsg = (msg: ConsoleMessage) => {
-    if (msg.type() !== "error") return;
-    const text = msg.text();
-    if (CONSOLE_ALLOW.some((p) => p.test(text))) return;
-    errors.push(text);
-  };
-  page.on("console", onMsg);
-  return () => errors;
-}
+// Console errors are watched via the shared fixture — see
+// fixtures/console-watch.ts for why this assertion is the one that earns its
+// keep, and for the caveat on what the allowlist hides.
 
 test.describe("10 — dashboard paths smoke", () => {
   test.describe("user persona", () => {
@@ -97,7 +78,7 @@ test.describe("10 — dashboard paths smoke", () => {
 
     for (const def of USER_PATHS) {
       test(`user ${def.path}`, async ({ page, baseURL }) => {
-        const errs = startConsoleWatch(page);
+        const errs = watchConsole(page);
         const resp = await page.goto(`${baseURL}${def.path}`);
         expect(resp?.status(), `GET ${def.path}`).toBeLessThan(500);
 
@@ -135,7 +116,7 @@ test.describe("10 — dashboard paths smoke", () => {
 
     for (const def of ADMIN_PATHS) {
       test(`admin ${def.path}`, async ({ page, baseURL }) => {
-        const errs = startConsoleWatch(page);
+        const errs = watchConsole(page);
         const resp = await page.goto(`${baseURL}${def.path}`);
         expect(resp?.status(), `GET ${def.path}`).toBeLessThan(500);
 

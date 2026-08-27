@@ -14,6 +14,7 @@
 
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/admin-session";
+import { watchConsole } from "../fixtures/console-watch";
 
 test.describe("18 — studio streamline", () => {
 	test.beforeEach(async ({ page }) => {
@@ -28,16 +29,20 @@ test.describe("18 — studio streamline", () => {
 	// "Jobs" survives only as that page's own IndexList title, which is what
 	// this was matching before the rail was relabelled.
 	test("sidebar has the consolidated nav (Data · Library · Scheduled)", async ({ page }) => {
+		const errors = watchConsole(page);
 		await page.goto("/studio/apps");
 		for (const label of ["Data", "Library", "Scheduled"]) {
 			await expect(page.getByRole("link", { name: new RegExp(`^${label}`) }).first()).toBeVisible({ timeout: 15_000 });
 		}
+		expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
 	});
 
 	test("/studio is the AI chat — greeting + composer card", async ({ page }) => {
+		const errors = watchConsole(page);
 		await page.goto("/studio");
 		await expect(page.getByRole("heading", { name: /^Good (morning|afternoon|evening)/ })).toBeVisible({ timeout: 15_000 });
 		await expect(page.getByPlaceholder(/Ask anything/)).toBeVisible();
+		expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
 	});
 
 	// The index moved out from under /studio/apps. That path is now
@@ -47,6 +52,7 @@ test.describe("18 — studio streamline", () => {
 	// AppsHome renders IndexList title="Agents" after the Phase 4 app→agent
 	// rename, so "Apps" matches no heading anywhere.
 	test("the agent index is a light list whose rows open the app", async ({ page }) => {
+		const errors = watchConsole(page);
 		await page.goto("/studio/apps/all");
 		// Serif page title, not a stat-chip hero.
 		await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible({ timeout: 15_000 });
@@ -59,6 +65,7 @@ test.describe("18 — studio streamline", () => {
 			await row.click();
 			await expect(page).toHaveURL(/\/studio\/apps\/(?!all(\?|$))[^/]+/, { timeout: 10_000 });
 		}
+		expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
 	});
 
 	test("library hosts marketplace/skills/experiments tabs; old routes redirect", async ({ page }) => {

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { watchConsole } from "../fixtures/console-watch";
 import { createUser } from "../fixtures/test-user";
 
 // Journey 11 — the Data system app at /studio/data.
@@ -69,6 +70,7 @@ test.describe("11 — Studio Data app (Catalog + Explorer)", () => {
   });
 
   test("Catalog is the default tab and the data-lake tree renders", async ({ page }) => {
+    const errors = watchConsole(page);
     // Catalog mounts eagerly (seen = new Set(["catalog"])); Explorer and Query
     // mount lazily on first click.
     await expect(page.getByPlaceholder(/filter tables across all instances/i)).toBeVisible({ timeout: 20_000 });
@@ -76,18 +78,22 @@ test.describe("11 — Studio Data app (Catalog + Explorer)", () => {
     // Asserted as a pattern, not a count — an offline instance is a legitimate
     // state here and must not turn this into a flake.
     await expect(page.getByText(/\d+\/3 instances .* tables/i)).toBeVisible({ timeout: 25_000 });
+    expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
   });
 
   test("Catalog lists all three lake instances", async ({ page }) => {
+    const errors = watchConsole(page);
     // LAKE_INSTANCES in src/api/dataLake.ts — FinData, Lumid Data, LQT Data.
     // Each renders a tree row that reads either "<n> schemas" or "offline";
     // the label is what must always be there.
     for (const label of ["FinData", "Lumid Data", "LQT Data"]) {
       await expect(page.getByText(label, { exact: true }).first()).toBeVisible({ timeout: 25_000 });
     }
+    expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
   });
 
   test("Explorer loads findata's endpoint catalog and can arm a request", async ({ page }) => {
+    const errors = watchConsole(page);
     await page.getByRole("button", { name: /^Explorer$/ }).click();
     // DataAppBrowser fetches /dataapp-proxy/_sources then
     // /dataapp-proxy/findata/openapi.json. Both are same-origin and public.
@@ -111,9 +117,11 @@ test.describe("11 — Studio Data app (Catalog + Explorer)", () => {
       page.getByRole("button", { name: /^Run$/ })
         .or(page.getByText(/streaming endpoint|websocket endpoint/i)),
     ).toBeVisible({ timeout: 20_000 });
+    expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
   });
 
   test("Explorer's source picker offers every allowlisted data app", async ({ page }) => {
+    const errors = watchConsole(page);
     await page.getByRole("button", { name: /^Explorer$/ }).click();
     const select = page.locator("select").first();
     await expect(select).toBeVisible({ timeout: 25_000 });
@@ -122,5 +130,6 @@ test.describe("11 — Studio Data app (Catalog + Explorer)", () => {
     // exists, rather than pinning the exact roster.
     await expect(select).toHaveValue("findata");
     expect(await select.locator("option").count()).toBeGreaterThan(1);
+    expect(errors(), `console errors:\n${errors().join("\n")}`).toEqual([]);
   });
 });
