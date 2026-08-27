@@ -135,9 +135,10 @@ async function resolveInviteCode(baseURL: string): Promise<string> {
  * resulting URL does carry ?strategy_id=, which is what makes the deep-link
  * look like it should work.
  *
- * That is a real product limitation, not a test artefact: a bookmark or an F5
- * on this page loses the strategy. It is recorded as an annotation on first use
- * rather than silently papered over — see the DEEP_LINK note below.
+ * Navigating this way is still the faithful journey — it is what a researcher
+ * does — so it stays even though lumid-ui v0.5.242 made the direct URL work
+ * too (the real defect was AppSurface interpolating only PATH params, which
+ * broke the page by every route, not just by deep link).
  */
 async function openStrategyDetail(page: Page, strategyId: string): Promise<void> {
 	await page.goto(`/studio/a/${APP}/strategies`);
@@ -345,14 +346,17 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		test.skip(!strategyId, "no strategy registered");
 		await loginViaUi(page, user);
 		await openStrategyDetail(page, strategyId);
-		// DEEP_LINK: record the limitation this helper works around, so a real
-		// product gap stays visible instead of being absorbed by the fix.
+		// The `Waiting for a strategy_id` state this used to hit was NOT a
+		// deep-link limitation, which is what it looked like at first: AppSurface
+		// interpolated only PATH params, so `{strategy_id}` from the row_href
+		// QUERY string was never substituted and the page was unusable by ANY
+		// route, row click included. Fixed in lumid-ui v0.5.242.
 		test.info().annotations.push({
-			type: "deep-link-unsupported",
+			type: "regression-guard",
 			description:
-				"/studio/a/lqt-mailbox/strategy?strategy_id=… does not resolve on a COLD load " +
-				"(renders 'Waiting for a strategy_id'); it only works when reached by clicking " +
-				"a row. A bookmark or a page refresh therefore loses the strategy.",
+				"Guards lumid-ui v0.5.242: surface specs must interpolate query params, " +
+				"not just path params — otherwise every widget here reads " +
+				"'Waiting for a strategy_id'.",
 		});
 		for (const h of [/^Registration$/i, /^Sessions$/i, /Backtests for this strategy/i, /Stop this strategy/i]) {
 			await expect(page.getByRole("heading", { name: h }).first()).toBeVisible({ timeout: 30_000 });
