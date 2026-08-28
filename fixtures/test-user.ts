@@ -31,7 +31,7 @@ function rand(): string {
  */
 export async function createUser(
 	baseURL: string,
-	opts: { tag?: string; password?: string; username?: string; invitationCode?: string } = {},
+	opts: { tag?: string; password?: string; username?: string; invitationCode?: string | null } = {},
 ): Promise<TestUser> {
 	const tag = opts.tag || `signup-${rand()}`;
 	// CI_E2E_LOCAL_OTP=1 takes the Redis backdoor path — uses a synthetic
@@ -55,7 +55,14 @@ export async function createUser(
 	// user looks fine at the API and is unusable in the browser — spec 05
 	// failed on exactly that, landing at /auth/redeem-invite?return_to=%2Fstudio
 	// instead of the account page, the first time it was ever allowed to run.
-	const invitationCode = opts.invitationCode || process.env.E2E_INVITATION_CODE || "";
+	// `invitationCode: null` means EXPLICITLY NONE — the caller wants a
+	// code-less account and must not silently inherit E2E_INVITATION_CODE
+	// from the environment. Spec 26 needs that: the assertion under test is
+	// that AuthGuard bounces a code-less student to /auth/redeem-invite, and
+	// an env-defaulted code would make it pass for the wrong reason.
+	// `undefined`/omitted keeps the old behaviour (env default).
+	const invitationCode =
+		opts.invitationCode === null ? "" : (opts.invitationCode || process.env.E2E_INVITATION_CODE || "");
 
 	const api = await request.newContext({ baseURL });
 	try {

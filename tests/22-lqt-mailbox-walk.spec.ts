@@ -10,7 +10,7 @@ import { localOtpEnabled } from "../fixtures/otp-redis";
 // seeded over REST — only *read* over REST, to assert what the UI claims.
 //
 //   1. fresh signup
-//   2. install lqt-mailbox from the marketplace        <- never done by any tenant
+//   2. install quant-research from the marketplace     <- never done by any tenant
 //   3. Strategies surface loads
 //   4. deploy a strategy through "Deploy a strategy"
 //   5. the row appears (a real mailbox ack round-trip, not optimistic render)
@@ -28,7 +28,14 @@ import { localOtpEnabled } from "../fixtures/otp-redis";
 //   CI_E2E_LOCAL_OTP=1      (read the OTP out of identity's Redis)
 // Skips cleanly when neither is present rather than failing red.
 
-const APP = "lqt-mailbox";
+// Renamed from `lqt-mailbox` (the bundle this spec was written against).
+// The published app is `a3f48236-…/quant-research` and its nav declares four
+// surfaces — strategies · backtests · forward · runtime — plus the `strategy`
+// detail surface reached by a row click. The legacy `page` overview left
+// `ui.nav`, so /studio/a/<app>/page is gone; it is still rendered by
+// AppOverview at /studio/apps/<app>, which is where the sidebar entry lands.
+// This walk goes to the four named surfaces, not that page.
+const APP = "quant-research";
 const WALK_ENABLED = process.env.LUMID_E2E_LQT_WALK !== "0";
 
 // Unique per run: concurrent runs must not collide on a strategy name, and
@@ -144,7 +151,7 @@ async function resolveInviteCode(baseURL: string): Promise<string> {
 
 /** Open the strategy detail page the way a USER reaches it: from the list.
  *
- * A cold `page.goto('/studio/a/lqt-mailbox/strategy?strategy_id=…')` does NOT
+ * A cold `page.goto('/studio/a/quant-research/strategy?strategy_id=…')` does NOT
  * work — the page renders its four sections and then reports
  *   "Waiting for a strategy_id — open this page from its parent list"
  * because it takes the id from in-app router state, not from the query string
@@ -157,8 +164,35 @@ async function resolveInviteCode(baseURL: string): Promise<string> {
  * too (the real defect was AppSurface interpolating only PATH params, which
  * broke the page by every route, not just by deep link).
  */
+/** Reveal the rows the Strategies surface hides by default.
+ *
+ * quant-research's `ui/strategies.yaml` declares
+ *   hide_when: [{key: name, prefix: e2e_}, {prefix: smoke_},
+ *               {prefix: verify-}, {prefix: probe-}]
+ * because 10 of 17 registry rows were test fixtures and they outnumbered the
+ * real strategies on the page. STRATEGY_NAME here is `e2e_walk_…`, so this
+ * walk's own row is hidden BY DESIGN — and the row assertions below would
+ * time out reporting "strategy row missing from the list", i.e. a rename-era
+ * surface feature wearing a registration failure's error message.
+ *
+ * lumid-ui renders the count as a toggle (`N hidden` / `hide N fixtures`,
+ * directives.tsx ~757) precisely so hidden rows stay reachable. Click it.
+ * Renaming the strategy to dodge the filter would be the wrong fix: the walk
+ * IS a fixture and should be filed as one.
+ */
+async function revealFixtureRows(page: Page): Promise<void> {
+	const toggle = page.getByRole("button", { name: /^\d+ hidden$/ }).first();
+	if (await toggle.count().catch(() => 0)) {
+		await toggle.click().catch(() => {});
+	}
+}
+
 async function openStrategyDetail(page: Page, strategyId: string): Promise<void> {
 	await page.goto(`/studio/a/${APP}/strategies`);
+	await expect(page.getByRole("heading", { name: /Your strategies/i }).first()).toBeVisible({
+		timeout: 45_000,
+	});
+	await revealFixtureRows(page);
 	const row = page.getByRole("row").filter({ hasText: STRATEGY_NAME }).first();
 	await expect(row, "strategy row missing from the list").toBeVisible({ timeout: 60_000 });
 	await row.getByRole("cell").first().click();
@@ -168,7 +202,7 @@ async function openStrategyDetail(page: Page, strategyId: string): Promise<void>
 	);
 }
 
-test.describe("22 — LQT mailbox: anonymous access", () => {
+test.describe("22 — quant-research: anonymous access", () => {
 	test("strategy surfaces require a session", async ({ page }) => {
 		await page.context().clearCookies();
 		await page.goto(`/studio/a/${APP}/strategies`);
@@ -176,7 +210,7 @@ test.describe("22 — LQT mailbox: anonymous access", () => {
 	});
 });
 
-test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
+test.describe("22 — quant-research: the quant-researcher walk", () => {
 	test.describe.configure({ mode: "serial" });
 
 	let user: TestUser;
@@ -267,7 +301,7 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		await page?.context().close();
 	});
 
-	test("step 2 — install lqt-mailbox from the marketplace", async () => {
+	test("step 2 — install quant-research from the marketplace", async () => {
 
 		// Already installed ⇒ nothing to do. With E2E_USER_EMAIL the account is
 		// a real, reused one that very likely already has the app, and the
@@ -293,34 +327,33 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		const search = page.getByPlaceholder(/search/i).first();
 		if (await search.count()) await search.fill(APP);
 
-		// TWO public cards share the name AND the display name "LQT Mailbox":
-		//   db86775d-…/lqt-mailbox  — the real one (this bundle)
-		//   a3f48236-…/lqt-mailbox  — a June snapshot, 3 forks, ships only
-		//                             ui/page.yaml, so it has NO Strategies
-		//                             surface and the rest of this walk 404s.
-		// The card DOM never renders owner_sub (MarketplaceBrowse.tsx:539
-		// computes the slug but only uses it for add-skill/subscribe), so the
-		// only in-browser discriminator is the summary text.
+		// The duplicate-card problem this step used to guard against was a
+		// `lqt-mailbox` artefact: TWO public cards shared that name (the real
+		// bundle under db86775d-… and a frozen June snapshot under a3f48236-…
+		// that shipped only ui/page.yaml, so picking it made the rest of the
+		// walk 404). Under the new name there is exactly ONE public repo,
+		// a3f48236-…/quant-research — confirmed against the marketplace API.
 		//
-		// Discriminate by EXCLUDING the stale card, not by matching the real
-		// one's summary. app_push auto-syncs `summary` from the bundle, so the
-		// real card's text changes at every publish (it reads "LQT research
-		// workspace …" today and becomes "Strategy-lifecycle surface for LQT …"
-		// after the next push) — an include-filter would fail on one side of
-		// that push or the other. The June snapshot's summary, by contrast, is
-		// frozen: it still describes the retired kv.run:5012 mailbox.
-		const cards = page.locator("article").filter({ hasText: new RegExp(APP) });
-		await expect(cards.first(), "lqt-mailbox is not listed in the marketplace").toBeVisible({
+		// The check is kept and INVERTED rather than deleted: assert the name
+		// is unambiguous, and say so loudly if a second card ever appears,
+		// because the card DOM still never renders owner_sub
+		// (MarketplaceBrowse.tsx:539 computes the slug but uses it only for
+		// add-skill/subscribe) and a duplicate would again be undetectable
+		// from the browser.
+		const cards = page
+			.locator("article")
+			.filter({ hasText: new RegExp(`${APP}|Quant Research`, "i") });
+		await expect(cards.first(), "quant-research is not listed in the marketplace").toBeVisible({
 			timeout: 30_000,
 		});
-		const card = cards
-			.filter({ hasNotText: /Bidirectional bridge to the LQT mailbox|kv\.run:5012/i })
-			.first();
-		await expect(
-			card,
-			`every listed lqt-mailbox card looks like the retired kv.run:5012 snapshot — ` +
-				`${await cards.count()} same-named card(s) listed, none of them this bundle`,
-		).toBeVisible({ timeout: 15_000 });
+		const cardCount = await cards.count();
+		expect(
+			cardCount,
+			`${cardCount} marketplace cards match "${APP}". The card DOM carries no owner_sub, so a ` +
+				`duplicate cannot be told apart in the browser and this step would install a coin-flip. ` +
+				`Re-add an exclusion filter naming the stale bundle's summary before trusting this walk.`,
+		).toBe(1);
+		const card = cards.first();
 
 		// The CTA reads "Add to my account", NOT "Install" — for kind=agent the
 		// card sells the install as "installs into My Agents and runs for you"
@@ -345,7 +378,7 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 			.poll(async () => (await installedApps(page)).includes(APP), {
 				timeout: 180_000,
 				intervals: [3_000],
-				message: "lqt-mailbox never appeared in /me/apps — the install stalled",
+				message: "quant-research never appeared in /me/apps — the install stalled",
 			})
 			.toBe(true);
 	});
@@ -373,13 +406,39 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		// The registry row only appears after the mailbox consumer acks, so this
 		// is a real round-trip. The consumer is single-threaded and compiles the
 		// .lqts inline, hence the generous ceiling.
+		//
+		// `e2e_`-prefixed names are hidden by this surface's hide_when rules, so
+		// the toggle has to be clicked before the row can ever be visible — and
+		// it only appears once there IS a hidden row, hence the poll.
+		await expect
+			.poll(async () => {
+				await revealFixtureRows(page);
+				return page.getByRole("row").filter({ hasText: STRATEGY_NAME }).count();
+			}, {
+				timeout: 240_000,
+				intervals: [5_000],
+				message:
+					"the strategy never registered. Two causes, in order of likelihood:\n" +
+					"  (1) TENANT ALLOWLIST — the mailbox consumer only serves the tenants listed in " +
+					"Secret `lqt-mailbox-consumer` key `tenant_id` (env LQT_MAILBOX_TENANT_ID). A user " +
+					"minted seconds ago is not on it, so strategy.deploy is terminally denied with " +
+					"`tenant … not served by this consumer instance`. The denial is INVISIBLE here: the " +
+					"reject ack carries no `strategy` echo, so /xpio/strategies stays at `sent` and the " +
+					"UI has already said `Queued send_strategy`. Set E2E_USER_EMAIL+E2E_USER_PASSWORD to " +
+					"an allowlisted account, or append the fresh user's uuid to that secret.\n" +
+					"  (2) the .lqts failed to compile — the reason is only in mailbox.lqt_outbox.",
+			})
+			.toBeGreaterThan(0);
 		const row = page.getByRole("row").filter({ hasText: STRATEGY_NAME }).first();
-		await expect(row, "the strategy never registered — no mailbox ack").toBeVisible({ timeout: 240_000 });
+		await expect(row, "the strategy registered but its row is not visible").toBeVisible({ timeout: 30_000 });
 
 		// Click a cell, not the row centre: the row's right-hand cell holds the
 		// action buttons and a centre click could land on one.
 		await row.getByRole("cell").first().click();
-		await expect(page).toHaveURL(/\/studio\/a\/lqt-mailbox\/strategy\?strategy_id=/, { timeout: 20_000 });
+		await expect(page).toHaveURL(
+			new RegExp(`/studio/a/${APP}/strategy\\?strategy_id=`),
+			{ timeout: 20_000 },
+		);
 		strategyId = new URL(page.url()).searchParams.get("strategy_id") ?? "";
 		expect(strategyId, "row_href carried no strategy_id").not.toBe("");
 	});
@@ -405,6 +464,41 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		// me://strategies?strategy_id= narrows client-side; prove it narrowed to
 		// THIS strategy rather than rendering the whole registry.
 		await expect(page.getByText(strategyId).first()).toBeVisible({ timeout: 30_000 });
+	});
+
+	test("step 6b — the detail surface's actions and reads target THIS app", async () => {
+		test.skip(!strategyId, "no strategy registered");
+		// A DOM-invisible regression, which is why it gets its own step.
+		//
+		// The app was renamed lqt-mailbox → quant-research. `ui/strategies.yaml`
+		// was repointed; `ui/strategy.yaml` (the DETAIL surface) was NOT — the
+		// published bundle still ships `app: lqt-mailbox` on all four row_actions
+		// and on the disable form, and sources its Sessions and Backtests tables
+		// from `me://chats?app=lqt-mailbox` / `me://app-data?app=lqt-mailbox`.
+		// Confirmed against the served spec, not the local checkout:
+		//   GET /api/v1/me/apps/quant-research/ui/strategy
+		//
+		// Consequences, all of which look like unrelated product faults:
+		//   - Backtest / Poll / Forward test on the detail row POST to
+		//     /api/v1/me/loops/lqt-mailbox/... — an app the student never
+		//     installed, so the button fails or silently does nothing (step 7).
+		//   - Sessions never lists the thread Discuss creates, because the chat
+		//     is written with app=quant-research and the table asks for
+		//     app=lqt-mailbox (step 9-10).
+		//
+		// Asserted on the SERVED spec so the failure names the cause instead of
+		// surfacing as a button timeout two steps later.
+		const spec = await getJson(page, `/api/v1/me/apps/${APP}/ui/strategy`);
+		const markdown = String(spec?.data?.markdown ?? "");
+		expect(markdown, `served surface spec for ${APP}/strategy came back empty`).not.toBe("");
+		const stale = markdown.match(/lqt-mailbox/g)?.length ?? 0;
+		expect(
+			stale,
+			`the published quant-research bundle's ui/strategy.yaml still names the OLD app ` +
+				`\`lqt-mailbox\` in ${stale} place(s). Fix the bundle (row_actions[].run_loop.app, ` +
+				`me://chats?app=, me://app-data?app=, the disable form's app) and republish — ` +
+				`steps 7 and 9-10 below cannot pass until it is.`,
+		).toBe(0);
 	});
 
 	test("step 7 — Backtest opens a claim and produces a run row", async () => {
@@ -448,6 +542,13 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 
 	test("step 9-10 — Discuss starts a session and Sessions lists it", async () => {
 		test.skip(!strategyId, "no strategy registered");
+		// The poll below allows 240s but the SUITE DEFAULT test timeout is 60s,
+		// so without this the test dies at 60s and reports "the strategy_id
+		// round-trip regressed" — a budget failure wearing a product failure's
+		// error message, exactly as step 4-5's comment warns. Discuss autosends a
+		// real model turn and the chat row is not persisted until it completes,
+		// so 60s was never enough.
+		test.setTimeout(330_000);
 		await openStrategyDetail(page, strategyId);
 		await page.getByRole("button", { name: /^Discuss$/ }).first().click();
 
@@ -481,7 +582,9 @@ test.describe("22 — LQT mailbox: the quant-researcher walk", () => {
 		await openStrategyDetail(page, strategyId);
 		await expect(
 			page.getByText(/No chat threads for this strategy yet/i),
-			"Sessions still shows its empty state",
+			"Sessions still shows its empty state. If step 6b also failed, this is the SAME defect: " +
+				"the detail surface asks for me://chats?app=lqt-mailbox while Discuss wrote the thread " +
+				"with app=quant-research, so no thread can ever match. Fix the bundle, not this assertion.",
 		).toHaveCount(0, { timeout: 30_000 });
 	});
 });
