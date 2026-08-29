@@ -497,16 +497,26 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 						},
 					)
 					.not.toEqual("");
+				// THROW INSIDE `timed`, not after it.
+				//
+				// The poll above resolves with the sentinel "__rejected__" when a
+				// rejection is found, and the sentinel satisfies `.not.toEqual("")` —
+				// so the poll SUCCEEDS on a strategy that failed to compile. Throwing
+				// after `timed()` returned meant the step table logged this as
+				// "strategy compiles ✅ 11s" while the findings said REJECTED, and the
+				// ✅ is what a reader scans first. Measured 2026-08-30: three students,
+				// all three rejected, all three shown green in the ledger.
+				//
+				// That is the same defect this whole spec exists to catch — a failure
+				// wearing the shape of a pass — reintroduced by the fix for it. Raising
+				// here makes `timed` record the ❌ and the real reason.
+				if (rejection) {
+					throw new Error(
+						`'${strategyName}' was REJECTED by the compiler, not lost: ${rejection}`,
+					);
+				}
 				return hash;
 			});
-			if (rejection) {
-				// Name what actually happened. This is a REAL product finding — the
-				// chatbox wrote a strategy that does not compile — and it is a
-				// different bug from "the submit vanished".
-				throw new Error(
-					`'${strategyName}' was REJECTED by the compiler, not lost: ${rejection}`,
-				);
-			}
 			expect(compiled).not.toEqual("");
 
 			const sub = await page.request
