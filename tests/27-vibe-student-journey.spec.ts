@@ -255,24 +255,55 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 				// and the DOC is the stale half — the opposite finding, and the one
 				// worth reporting, because the doc is what a student reads first.
 				const tellsYouWhatToDo = /log(ged)? in|browser|dashboard\/tokens|studio\/account\/tokens/i.test(txt);
-				findings.push(
-					tellsYouWhatToDo
-						? {
+				if (!tellsYouWhatToDo) {
+					findings.push({
+						severity: "friction",
+						surface: "§1 mint from a script",
+						note: `Mint from a script returns a 403 that does not say what to do instead: "${txt}"`,
+					});
+				} else {
+					// The message is fine. Whether the DOC is stale is a question about
+					// the doc, so ASK THE DOC — do not assert it.
+					//
+					// This block used to emit a drift finding unconditionally here,
+					// asserting that §1 "spends a paragraph warning that the mint 403 is
+					// misleading". That was true when written and the doc has since been
+					// fixed, so every run reported a stale finding as fact. Reported
+					// three times in the 2026-08-29 run alone, all false. A report that
+					// carries confident false positives is worse than a shorter one:
+					// it costs the reader the trust they need for the true findings.
+					const docRes = await page.request.get("/docs/first-run.md", {
+						failOnStatusCode: false,
+					});
+					const doc = docRes.ok() ? await docRes.text().catch(() => "") : "";
+					if (!doc) {
+						findings.push({
+							severity: "friction",
+							surface: "first-run.md",
+							note: `Could not fetch /docs/first-run.md (${docRes.status()}) to check it against the live 403.`,
+						});
+					} else {
+						const stillClaimsMisleading = /misleading|fixing the wording|names the wrong scope/i.test(doc);
+						// The message points at /dashboard/tokens. The doc links the Studio
+						// page. That is only drift if the doc never reconciles the two.
+						const reconcilesBothPaths =
+							/dashboard\/tokens/i.test(doc) && /same tokens page|are the same/i.test(doc);
+						if (stillClaimsMisleading || !reconcilesBothPaths) {
+							findings.push({
 								severity: "drift",
 								surface: "first-run.md §1 vs the live 403",
 								note:
-									"§1 spends a paragraph warning that the mint 403 'is misleading and we are fixing " +
-									"the wording'. It has been fixed: the live message names the browser path directly. " +
-									"The doc now manufactures confusion about an error that explains itself, and it " +
-									"points at /studio/account/tokens while the message points at /dashboard/tokens. " +
-									`Live: "${txt}"`,
-							}
-						: {
-								severity: "friction",
-								surface: "§1 mint from a script",
-								note: `Mint from a script returns a 403 that does not say what to do instead: "${txt}"`,
-							},
-				);
+									"The live 403 names the browser path directly, but §1 still " +
+									(stillClaimsMisleading ? "warns the message is misleading/being reworded" : "") +
+									(stillClaimsMisleading && !reconcilesBothPaths ? " and " : "") +
+									(!reconcilesBothPaths
+										? "links /studio/account/tokens without saying it is the same page as /dashboard/tokens"
+										: "") +
+									`. Live: "${txt}"`,
+							});
+						}
+					}
+				}
 			}
 
 			// §3 — install quant-research.
