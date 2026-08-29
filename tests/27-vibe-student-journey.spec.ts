@@ -413,6 +413,25 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 
 			// A submit that was accepted and a strategy that COMPILED are different
 			// events — an empty program_hash means it never compiled, so it never ran.
+			//
+			// WHY THIS ALSO READS `rejected`: this assertion used to say "the mailbox
+			// accepted the submit and the consumer never registered it — the failure
+			// mode that looks like success". That was true when written and is now
+			// WRONG, and wrong in the expensive direction: it reports data loss when
+			// the consumer has in fact produced a precise diagnosis. Measured
+			// 2026-08-29 — all three students' strategies were rejected in 10-15ms
+			// with exact parse errors ("expected `when` to start a guard, found
+			// identifier `param`"), and the run reported "never registered" for all
+			// three. A test that misnames a failure sends the next person hunting the
+			// wrong bug.
+			//
+			// `rejected` (identity v0.5.281, LQT migration 0079) carries the
+			// consumer's own reason, so poll BOTH and stop as soon as either answers.
+			// `rejected_unavailable` is surfaced too: an empty list and a failed query
+			// read identically otherwise, which is the same ambiguity this block is
+			// here to kill.
+			let rejection = "";
+			let rejectionUnavailable = "";
 			const compiled = await timed(slot, "strategy compiles (program_hash)", "§5", async () => {
 				let hash = "";
 				await expect
@@ -421,21 +440,42 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 							const r = await page.request.get("/api/v1/me/strategies");
 							if (!r.ok()) return "";
 							const b = await r.json().catch(() => null);
-							const row = (b?.data?.strategies ?? []).find((s: any) => s.name === strategyName);
+							const d = b?.data ?? {};
+							const row = (d.strategies ?? []).find((s: any) => s.name === strategyName);
 							hash = String(row?.program_hash ?? "");
-							return hash;
+							if (hash) return hash;
+							rejectionUnavailable = String(d.rejected_unavailable ?? "");
+							const rej = (d.rejected ?? []).find((x: any) => x?.name === strategyName);
+							if (rej?.reason) {
+								// A rejection is TERMINAL — it will never become a hash, so
+								// returning a sentinel ends the poll immediately instead of
+								// burning the full budget on a verdict we already have.
+								rejection = String(rej.reason);
+								return "__rejected__";
+							}
+							return "";
 						},
 						{
 							timeout: CHAT_BUDGET_MS,
 							intervals: [5_000],
 							message:
-								`'${strategyName}' never got a non-empty program_hash. The mailbox accepted the ` +
-								"submit and the consumer never registered it — the failure mode that looks like success.",
+								`'${strategyName}' never got a non-empty program_hash, and no rejection ` +
+								"was surfaced either. Submit accepted, verdict never produced — check " +
+								"whether the mailbox consumer is draining." +
+								(rejectionUnavailable ? ` (rejection read failed: ${rejectionUnavailable})` : ""),
 						},
 					)
 					.not.toEqual("");
 				return hash;
 			});
+			if (rejection) {
+				// Name what actually happened. This is a REAL product finding — the
+				// chatbox wrote a strategy that does not compile — and it is a
+				// different bug from "the submit vanished".
+				throw new Error(
+					`'${strategyName}' was REJECTED by the compiler, not lost: ${rejection}`,
+				);
+			}
 			expect(compiled).not.toEqual("");
 
 			const sub = await page.request
