@@ -514,35 +514,69 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 					});
 				}
 			} catch {
-				// Capture what the assistant actually said. "No parseable code block"
-				// is not yet a diagnosis: a refusal, a prose answer, a composer that
-				// never mounted and a cold sandbox all look identical from here, and
-				// they need four different fixes.
+				// Capture what the assistant actually said. "Never registered" is not
+				// yet a diagnosis: a refusal, a prose answer, a composer that never
+				// mounted, an unclicked approval prompt and a cold sandbox all look
+				// identical from here, and they need different fixes.
 				const said = (await page.locator("main").innerText().catch(() => ""))
 					.replace(/\s+/g, " ")
 					.slice(-700);
-				// Classify. "No parseable code block" is a symptom with at least three
-				// causes needing three different fixes, and calling them all "chat is
-				// broken" would send someone to the wrong one.
+				// GROUND TRUTH FIRST. The rejection ledger (identity v0.5.281 + LQT
+				// migration 0079) records every submit that REACHED the compiler,
+				// carrying the compiler's own words. Read that before inferring
+				// anything from rendered text.
+				//
+				// This replaced a regex that scored the page tail for "a dialect that
+				// does not exist". It inverted on 2026-08-30: the tail now contains
+				// the COMPILER'S ERROR, which quotes the offending `param` back at the
+				// reader — so a student who submitted, read the error and fixed it
+				// scored as though they had never known the language. It had also
+				// outlived its premise, since `param x = 1` compiles (lqt#919).
+				const reasons: string[] = await page.request
+					.get("/api/v1/me/strategies")
+					.then(async (r) => (r.ok() ? ((await r.json().catch(() => null))?.data ?? {}) : {}))
+					.then((d: any) =>
+						(d.rejected ?? [])
+							.filter((x: any) => String(x?.name ?? "") === chatStrategyName)
+							.map((x: any) => String(x?.reason ?? ""))
+							.filter(Boolean),
+					)
+					.catch(() => []);
+				const distinct = new Set(reasons).size;
 				const leakedToolMarkup = /DSML|tool_calls|invoke name=/.test(said);
-				const wrongDialect = /\bstrategy\s+\w+/.test(said) && /\bparam\s+\w+\s*=|on_signal|:\s*buy|\bat mid\b/.test(said);
+				const stalledOnApproval = /Running lqt_mailbox_submit|\bAlways\b|\bAllow\b/i.test(said);
+				// Four outcomes, four different owners. Collapsing them into "chat is
+				// broken" is what sent the last two sessions to the wrong fix.
+				const reachedCompiler = reasons.length > 0;
+				const quoted = reasons.map((r) => `"${r}"`).join(" then ");
 				findings.push({
-					severity: "blocker",
+					severity: reachedCompiler && (reasons.length === 1 || distinct > 1) ? "friction" : "blocker",
 					surface: "§5 chat-authored strategy",
-					note: leakedToolMarkup
-						? "The assistant's raw tool-call markup (`<|DSML|tool_calls>`) rendered as literal text in " +
-							"the chat instead of being parsed and executed. The student sees machine syntax, no " +
-							`answer, and no error. Tail: "${said}"`
-						: wrongDialect
-							? "The assistant answered quickly and confidently with a strategy in a DIALECT THAT DOES " +
-								"NOT EXIST — `param x = 0.15` / `on_signal foo:` / `buy lots = size at mid` instead of " +
-								"`params { … }` and `when signal(\"foo\") > params.x { buy N lots @ mid }`. It will never " +
-								"compile. This is worse than a refusal: §5 tells a student who cannot write DSL to paste " +
-								"the reply straight into the deploy form, and what comes back looks entirely plausible. " +
-								`Tail: "${said}"`
-							: "The chatbox returned no parseable .lqts within the budget. §5 tells students they do " +
-								"not have to write the DSL by hand and shows a verbatim transcript of it working — for " +
-								`a student who cannot write DSL this is the whole on-ramp. Tail: "${said}"`,
+					note: !reachedCompiler
+						? leakedToolMarkup
+							? "The assistant's raw tool-call markup (`<|DSML|tool_calls>`) rendered as literal text " +
+								"in the chat instead of being parsed and executed. The student sees machine syntax, " +
+								`no answer, and no error. Tail: "${said}"`
+							: stalledOnApproval
+								? "NOTHING REACHED THE COMPILER: the submit sat on the Allow/Always approval prompt " +
+									"until the budget expired. This is an approval-gating finding, not a DSL one — " +
+									`the assistant never got the chance to be wrong. Tail: "${said}"`
+								: "The chatbox produced nothing that reached the compiler within the budget, and no " +
+									"approval prompt was seen. §5 tells students they do not have to write the DSL by " +
+									"hand and shows a verbatim transcript of it working — for a student who cannot " +
+									`write DSL this is the whole on-ramp. Tail: "${said}"`
+						: reasons.length === 1
+							? "The assistant SUBMITTED and the compiler rejected it once, then the budget expired " +
+								"before a second attempt landed — so the fix-and-resubmit loop was cut off rather " +
+								`than shown to fail. Usually the second approval prompt. Compiler said: ${quoted}`
+							: distinct > 1
+								? `The assistant submitted ${reasons.length} times and the errors DIFFER between ` +
+									"attempts, so the feedback loop IS working: it read each rejection and changed the " +
+									"source. It ran out of budget mid-iteration. That is a pacing finding, not a " +
+									`language one. Compiler said: ${quoted}`
+								: `The assistant submitted ${reasons.length} times and every attempt failed the SAME ` +
+									"way, so it is not learning from the error text it is handed. This is the one " +
+									`shape that is a genuine model/prompt defect. Compiler said: ${quoted}`,
 				});
 			}
 			// fromChat now means "the assistant got it REGISTERED", not "the
