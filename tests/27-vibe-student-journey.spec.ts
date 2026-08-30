@@ -404,14 +404,30 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 					const approver = (async () => {
 						try {
 							while (!approverDone && Date.now() < approveDeadline) {
-								const btn = page
-									.getByRole("button", { name: /^(Always|Allow)$/i })
-									.first();
-								if (await btn.isVisible().catch(() => false)) {
-									await btn.click().catch(() => {});
-									approvals += 1;
+								// Try the exact-name role match first, then fall back to any
+								// clickable element whose text is Allow/Always. Measured
+								// 2026-08-30: identity logged `approval denied/timeout` for a
+								// student whose prompt this never clicked, while a sibling in
+								// the same run was approved fine — so the strict selector
+								// misses some renderings, and a missed click costs the whole
+								// 180s budget and reads as a DSL failure.
+								let clicked = false;
+								const byRole = page.getByRole("button", { name: /^(Always|Allow)$/i }).first();
+								if (await byRole.isVisible().catch(() => false)) {
+									await byRole.click().catch(() => {});
+									clicked = true;
+								} else {
+									const loose = page
+										.locator("button, [role=button]")
+										.filter({ hasText: /^\s*(Always|Allow)\s*$/i })
+										.first();
+									if (await loose.isVisible().catch(() => false)) {
+										await loose.click().catch(() => {});
+										clicked = true;
+									}
 								}
-								await page.waitForTimeout(1_500);
+								if (clicked) approvals += 1;
+								await page.waitForTimeout(1_000);
 							}
 						} catch {
 							// The page went away, or a click raced a re-render. Either way
