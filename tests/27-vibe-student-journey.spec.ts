@@ -70,7 +70,13 @@ const VERDICT_POLL_MS = Number.parseInt(process.env.E2E_VIBE_POLL_MS || "600000"
 // So the ceiling never rescues a bad draw — it only decides how long the run
 // pays for one. 180s clears the slowest observed success by ~80% and makes a
 // failure cost a third of what it did.
-const CHAT_BUDGET_MS = Number.parseInt(process.env.E2E_VIBE_CHAT_MS || "180000", 10);
+// 180s was sized for "write me a code block". The documented flow is now
+// submit-compile-fix-resubmit, which pays a cold sandbox spawn, a draft, a
+// compile round trip, a rethink and a second submit. Measured 2026-08-30: the
+// model was mid-resubmit at 139s and 159s when the step gave up — it was
+// working, and the clock was the thing that failed. 300s leaves room for two
+// full iterations without inviting an endless one.
+const CHAT_BUDGET_MS = Number.parseInt(process.env.E2E_VIBE_CHAT_MS || "300000", 10);
 
 // ── the record ────────────────────────────────────────────────────────────
 
@@ -411,8 +417,18 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 								// the same run was approved fine — so the strict selector
 								// misses some renderings, and a missed click costs the whole
 								// 180s budget and reads as a DSL failure.
+								// PREFER "Always". "Allow" is one-time, so a fix-and-resubmit
+								// loop prompts AGAIN on the second submit — measured
+								// 2026-08-30: the first submit was approved, rejected with a
+								// parse error, the model correctly fixed it, and the resubmit
+								// then sat unapproved until the budget ran out
+								// ("Running lqt_mailbox_submit — 139s"). Granting once per
+								// session is what makes the iteration loop survivable.
 								let clicked = false;
-								const byRole = page.getByRole("button", { name: /^(Always|Allow)$/i }).first();
+								const always = page.getByRole("button", { name: /^Always$/i }).first();
+								const byRole = (await always.isVisible().catch(() => false))
+									? always
+									: page.getByRole("button", { name: /^(Always|Allow)$/i }).first();
 								if (await byRole.isVisible().catch(() => false)) {
 									await byRole.click().catch(() => {});
 									clicked = true;
