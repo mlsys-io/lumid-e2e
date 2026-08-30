@@ -76,7 +76,13 @@ const VERDICT_POLL_MS = Number.parseInt(process.env.E2E_VIBE_POLL_MS || "600000"
 // model was mid-resubmit at 139s and 159s when the step gave up — it was
 // working, and the clock was the thing that failed. 300s leaves room for two
 // full iterations without inviting an endless one.
-const CHAT_BUDGET_MS = Number.parseInt(process.env.E2E_VIBE_CHAT_MS || "300000", 10);
+// 450s, not 300s. Raised on measurement, not on hope: once identity v0.5.283
+// stopped dropping half the tool approvals, the fix-and-resubmit loop actually
+// runs, and successes stretched to fill it — 134/199/213/224s in run23 against
+// a 300s ceiling, with both failures still mid-iteration at 298s ("submitted 5
+// times and the errors DIFFER"). Two students landed within 80s of the wall.
+// Earlier runs looked like a pacing problem and were not; this one is.
+const CHAT_BUDGET_MS = Number.parseInt(process.env.E2E_VIBE_CHAT_MS || "450000", 10);
 
 // ── the record ────────────────────────────────────────────────────────────
 
@@ -895,118 +901,130 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 	test("a backtest reaches a verdict, and the three axes are honest", async ({
 		playwright,
 	}, testInfo) => {
-		testInfo.setTimeout(VERDICT_POLL_MS + 3 * 60_000);
+		// EVERY student with a compiled strategy, not just the first. This test
+		// used to run `students[0]` alone while the verdict line divided by
+		// students.length — so a healthy single run was published as "1/6", a
+		// number that reads as an 83% failure rate and is really 1 of 1
+		// attempted. Backtest pacing is per TENANT (3 in flight / 10s) and each
+		// student is their own tenant, so they do not contend.
+		const eligible = students.filter((x) => x.pat && x.strategySrc);
+		testInfo.setTimeout(eligible.length * (VERDICT_POLL_MS + 60_000) + 120_000);
 		const api = await playwright.request.newContext();
 		const base = testInfo.project.use.baseURL ?? "https://lum.id";
-		const s = students[0];
+		for (const s of eligible) {
 
-		// §6 — name the instrument. Blank defaults the symbol to SYNTH, and the
-		// run comes back synthetic_lcg looking exactly like a result.
-		s.claimId = await timed(s.slot, "submit backtest (named symbol)", "§6", async () => {
-			const r = await api.post(`${base}/api/research/backtests`, {
+			// §6 — name the instrument. Blank defaults the symbol to SYNTH, and the
+			// run comes back synthetic_lcg looking exactly like a result.
+			s.claimId = await timed(s.slot, "submit backtest (named symbol)", "§6", async () => {
+				const r = await api.post(`${base}/api/research/backtests`, {
+					headers: { Authorization: `Bearer ${s.pat}` },
+					data: { name: `${s.strategyName}_bt`, strategy: { dsl: s.strategySrc }, symbol: SYMBOL },
+				});
+				expect(
+					r.ok(),
+					`backtest submit failed: ${r.status()} ${(await r.text().catch(() => "")).slice(0, 300)}`,
+				).toBeTruthy();
+				const b = await r.json();
+				const id = String(b?.claim_id ?? b?.data?.claim_id ?? "");
+				expect(id, "submit returned no claim_id").toBeTruthy();
+				return id;
+			});
+
+			// The pacing rule is server-side: 1 in flight, 300s apart, per tenant. A
+			// second submit must be REFUSED with a retry time, not queued — a student
+			// who cannot tell "refused" from "accepted" resubmits into a wall.
+			// ONCE per run, on the first eligible student. The rule is per tenant,
+			// so probing it six times would just restate the same finding six
+			// times in the report.
+			const probePacing = s.slot === eligible[0].slot;
+			const second = probePacing ? await api.post(`${base}/api/research/backtests`, {
 				headers: { Authorization: `Bearer ${s.pat}` },
-				data: { name: `${s.strategyName}_bt`, strategy: { dsl: s.strategySrc }, symbol: SYMBOL },
+				data: { name: `${s.strategyName}_bt2`, strategy: { dsl: s.strategySrc }, symbol: SYMBOL },
+				failOnStatusCode: false,
+			}) : null;
+			if (second && second.status() !== 409) {
+				findings.push({
+					severity: "friction",
+					surface: "POST /api/research/backtests (pacing)",
+					note:
+						`A second submit while one was in flight returned ${second.status()}, not the documented 409 ` +
+						`too_many_in_flight / too_soon. §6 tells students a breach is "refused, not queued" and that ` +
+						`the refusal names the earliest retry time.`,
+				});
+			}
+
+			const verdict = await timed(s.slot, "poll to verdict", "§7-8", async () => {
+				let last: any = null;
+				await expect
+					.poll(
+						async () => {
+							const r = await api.get(`${base}/api/research/backtests/${s.claimId}`, {
+								headers: { Authorization: `Bearer ${s.pat}` },
+							});
+							if (!r.ok()) return "";
+							last = await r.json().catch(() => null);
+							return String(last?.status ?? last?.data?.status ?? "");
+						},
+						{
+							timeout: VERDICT_POLL_MS,
+							intervals: [10_000],
+							message:
+								`claim ${s.claimId} never left queued/running within ${Math.round(VERDICT_POLL_MS / 60000)} ` +
+								"minutes. The worker drains round-robin across tenants, so this is a backlog or a stall — " +
+								"either way the student's afternoon ends with no number.",
+						},
+					)
+					.toMatch(/settled|done|complete|failed|error/i);
+				return last;
 			});
+			s.verdict = verdict;
+
+			// The axes live INSIDE `replay`, not beside it. The status handler
+			// selects `replay_json` and returns it as `replay: Option<Value>`
+			// (services/lqt-api-gateway/src/handlers/backtest.rs:92,244), so that
+			// field is the whole result document — the one whose OWN `replay` key
+			// carries pg_tape/synthetic_lcg. Reading the outer field as a string
+			// stringifies an object to "[object Object]" and reports every real run
+			// as unlabelled, which is a false alarm in the most alarming direction.
+			const doc: any = verdict?.data ?? verdict ?? {};
+			const axes: any =
+				doc.replay && typeof doc.replay === "object" ? doc.replay : doc;
+			const replay = typeof axes.replay === "string" ? axes.replay : "";
+			const signals = typeof axes.signals === "string" ? axes.signals : "";
+			const settlement = typeof axes.settlement === "string" ? axes.settlement : "";
+			const totalActions = Number(axes.total_actions ?? axes.steps_evaluated ?? 0);
+			const prints = Number(axes.prints_replayed ?? 0);
+			// AFTER the consts above, not before them. Assigning this next to
+			// `s.verdict` put it in the temporal dead zone and threw
+			// `Cannot access 'replay' before initialization` — which surfaced as a
+			// FAILED VERDICT TEST on a backtest that had settled perfectly well in
+			// 30s. A harness bug wearing a product bug's clothes.
+			s.axes = { replay, signals, settlement, prints, totalActions };
+
+			// A missing replay label is treated as not-real BY RULE. Asserting the
+			// field is present is asserting the gate is wired at all.
 			expect(
-				r.ok(),
-				`backtest submit failed: ${r.status()} ${(await r.text().catch(() => "")).slice(0, 300)}`,
-			).toBeTruthy();
-			const b = await r.json();
-			const id = String(b?.claim_id ?? b?.data?.claim_id ?? "");
-			expect(id, "submit returned no claim_id").toBeTruthy();
-			return id;
-		});
+				replay,
+				"the settled claim carries no `replay` label — a result with no replay field is not-real by rule, " +
+					"so a student cannot tell a recorded tape from a generator",
+			).not.toEqual("");
 
-		// The pacing rule is server-side: 1 in flight, 300s apart, per tenant. A
-		// second submit must be REFUSED with a retry time, not queued — a student
-		// who cannot tell "refused" from "accepted" resubmits into a wall.
-		const second = await api.post(`${base}/api/research/backtests`, {
-			headers: { Authorization: `Bearer ${s.pat}` },
-			data: { name: `${s.strategyName}_bt2`, strategy: { dsl: s.strategySrc }, symbol: SYMBOL },
-			failOnStatusCode: false,
-		});
-		if (second.status() !== 409) {
-			findings.push({
-				severity: "friction",
-				surface: "POST /api/research/backtests (pacing)",
-				note:
-					`A second submit while one was in flight returned ${second.status()}, not the documented 409 ` +
-					`too_many_in_flight / too_soon. §6 tells students a breach is "refused, not queued" and that ` +
-					`the refusal names the earliest retry time.`,
-			});
+			const allReal = replay === "pg_tape" && signals === "recorded" && settlement === "resolved";
+			if (!allReal) {
+				findings.push({
+					severity: "blocker",
+					surface: "backtest verdict",
+					note:
+						`A student who named a real instrument got replay=${replay || "(none)"} ` +
+						`signals=${signals || "(none)"} settlement=${settlement || "(none)"} ` +
+						`(${prints} prints replayed) — not presentable as ` +
+						`performance. The honesty gate is doing its job; the question is whether a first-day student ` +
+						`can ever reach three-axis-real on the documented path.`,
+				});
+			}
+			// NOT asserted: total_actions > 0. A real run that never crossed its
+			// threshold is a real result, and the docs forbid tuning to change that.
 		}
-
-		const verdict = await timed(s.slot, "poll to verdict", "§7-8", async () => {
-			let last: any = null;
-			await expect
-				.poll(
-					async () => {
-						const r = await api.get(`${base}/api/research/backtests/${s.claimId}`, {
-							headers: { Authorization: `Bearer ${s.pat}` },
-						});
-						if (!r.ok()) return "";
-						last = await r.json().catch(() => null);
-						return String(last?.status ?? last?.data?.status ?? "");
-					},
-					{
-						timeout: VERDICT_POLL_MS,
-						intervals: [10_000],
-						message:
-							`claim ${s.claimId} never left queued/running within ${Math.round(VERDICT_POLL_MS / 60000)} ` +
-							"minutes. The worker drains round-robin across tenants, so this is a backlog or a stall — " +
-							"either way the student's afternoon ends with no number.",
-					},
-				)
-				.toMatch(/settled|done|complete|failed|error/i);
-			return last;
-		});
-		s.verdict = verdict;
-
-		// The axes live INSIDE `replay`, not beside it. The status handler
-		// selects `replay_json` and returns it as `replay: Option<Value>`
-		// (services/lqt-api-gateway/src/handlers/backtest.rs:92,244), so that
-		// field is the whole result document — the one whose OWN `replay` key
-		// carries pg_tape/synthetic_lcg. Reading the outer field as a string
-		// stringifies an object to "[object Object]" and reports every real run
-		// as unlabelled, which is a false alarm in the most alarming direction.
-		const doc: any = verdict?.data ?? verdict ?? {};
-		const axes: any =
-			doc.replay && typeof doc.replay === "object" ? doc.replay : doc;
-		const replay = typeof axes.replay === "string" ? axes.replay : "";
-		const signals = typeof axes.signals === "string" ? axes.signals : "";
-		const settlement = typeof axes.settlement === "string" ? axes.settlement : "";
-		const totalActions = Number(axes.total_actions ?? axes.steps_evaluated ?? 0);
-		const prints = Number(axes.prints_replayed ?? 0);
-		// AFTER the consts above, not before them. Assigning this next to
-		// `s.verdict` put it in the temporal dead zone and threw
-		// `Cannot access 'replay' before initialization` — which surfaced as a
-		// FAILED VERDICT TEST on a backtest that had settled perfectly well in
-		// 30s. A harness bug wearing a product bug's clothes.
-		s.axes = { replay, signals, settlement, prints, totalActions };
-
-		// A missing replay label is treated as not-real BY RULE. Asserting the
-		// field is present is asserting the gate is wired at all.
-		expect(
-			replay,
-			"the settled claim carries no `replay` label — a result with no replay field is not-real by rule, " +
-				"so a student cannot tell a recorded tape from a generator",
-		).not.toEqual("");
-
-		const allReal = replay === "pg_tape" && signals === "recorded" && settlement === "resolved";
-		if (!allReal) {
-			findings.push({
-				severity: "blocker",
-				surface: "backtest verdict",
-				note:
-					`A student who named a real instrument got replay=${replay || "(none)"} ` +
-					`signals=${signals || "(none)"} settlement=${settlement || "(none)"} ` +
-					`(${prints} prints replayed) — not presentable as ` +
-					`performance. The honesty gate is doing its job; the question is whether a first-day student ` +
-					`can ever reach three-axis-real on the documented path.`,
-			});
-		}
-		// NOT asserted: total_actions > 0. A real run that never crossed its
-		// threshold is a real result, and the docs forbid tuning to change that.
 		await api.dispose();
 	});
 
@@ -1027,7 +1045,7 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 			"",
 			"## Verdict",
 			"",
-			`- Students who reached a **three-axis-real** backtest: **${real}/${students.length}**`,
+			`- Students who reached a **three-axis-real** backtest: **${real}/${students.filter((s) => s.axes).length}** _(of ${students.length} onboarded; only students whose strategy compiled can run one)_`,
 			`- Strategy authored by the **chatbox** (the vibe path): ${students.filter((s) => s.strategyFromChat).length}/${students.length}`,
 			`- Blockers: **${blockers.length}** · friction/drift: ${findings.length - blockers.length}`,
 			`- Wall-clock across recorded steps: ${(total / 60000).toFixed(1)} min`,
