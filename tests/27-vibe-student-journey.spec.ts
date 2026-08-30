@@ -517,7 +517,7 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 							"student who cannot write DSL; minutes of silent tool-calling is what they meet instead.",
 					});
 				}
-			} catch {
+			} catch (err) {
 				// Capture what the assistant actually said. "Never registered" is not
 				// yet a diagnosis: a refusal, a prose answer, a composer that never
 				// mounted, an unclicked approval prompt and a cold sandbox all look
@@ -553,6 +553,29 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 				// broken" is what sent the last two sessions to the wrong fix.
 				const reachedCompiler = reasons.length > 0;
 				const quoted = reasons.map((r) => `"${r}"`).join(" then ");
+				// A STUDENT WHO REGISTERED IS NOT A CHAT FAILURE, whatever route
+				// reached this catch. Run18 emitted three chat-failure findings for
+				// two failures: the extra one belonged to the student who SUCCEEDED
+				// (ledger ✅ 102s, no fallback row, registered by chat at 06:19:45).
+				// The catch is reachable after `registeredByChat` is already true —
+				// the `.finally()` chained onto `timed()` runs after timed has
+				// recorded success, so a throw there rejects the awaited expression
+				// and lands here with a ✅ already in the ledger. Rather than guess
+				// at which throw, gate on the fact that settles it either way.
+				if (registeredByChat) {
+					findings.push({
+						severity: "friction",
+						surface: "§5 chat submit — post-success error",
+						note:
+							`'${chatStrategyName}' WAS registered by chat, but the step still threw afterwards. ` +
+							"The registration stands; this is walk plumbing failing after the product " +
+							`succeeded, and it must not be reported as a chat failure. Error: ${String(err).slice(0, 200)}`,
+					});
+					// Deliberately NOT rethrown. The student registered a strategy;
+					// failing their walk on plumbing that ran afterwards would report
+					// a product failure that did not happen. The finding above is how
+					// the plumbing bug stays visible, carrying the real error text.
+				}
 				findings.push({
 					severity: reachedCompiler && (reasons.length === 1 || distinct > 1) ? "friction" : "blocker",
 					surface: "§5 chat-authored strategy",
