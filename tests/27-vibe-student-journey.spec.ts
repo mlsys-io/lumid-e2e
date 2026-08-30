@@ -585,40 +585,49 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 					// failing their walk on plumbing that ran afterwards would report
 					// a product failure that did not happen. The finding above is how
 					// the plumbing bug stays visible, carrying the real error text.
+					//
+					// AND STOP HERE. The first cut of this gate pushed the notice and
+					// then FELL THROUGH into the classifier below, so a successful
+					// student collected BOTH findings — run19 reported a `blocker`
+					// whose own tail quoted vibe_1_mtfq1v3o being "registered with
+					// program hash e836214f". Suppressing the failure story is the
+					// entire point of the gate; adding a second finding beside it is
+					// not a fix.
+				} else {
+					findings.push({
+						severity: reachedCompiler && (reasons.length === 1 || distinct > 1) ? "friction" : "blocker",
+						surface: "§5 chat-authored strategy",
+						note: !reachedCompiler
+							? leakedToolMarkup
+								? "The assistant's raw tool-call markup (`<|DSML|tool_calls>`) rendered as literal text " +
+									"in the chat instead of being parsed and executed. The student sees machine syntax, " +
+									`no answer, and no error. Tail: "${said}"`
+								: stalledOnApproval
+									? "NOTHING REACHED THE COMPILER: the submit sat on the Allow/Always approval gate " +
+										`until the budget expired, with ${approvals} Allow/Always click(s) landed. This is ` +
+										"an approval-gating finding, not a DSL one — the assistant never got the chance " +
+										"to be wrong. The click count separates the two causes that look identical from " +
+										"the outside: 0 means the chip never rendered for the walk to click (a UI or " +
+										"timing problem), >0 means it was clicked and the turn still did not proceed (the " +
+										`grant or the approve POST is not landing). Tail: "${said}"`
+									: "The chatbox produced nothing that reached the compiler within the budget, and no " +
+										"approval prompt was seen. §5 tells students they do not have to write the DSL by " +
+										"hand and shows a verbatim transcript of it working — for a student who cannot " +
+										`write DSL this is the whole on-ramp. Tail: "${said}"`
+							: reasons.length === 1
+								? "The assistant SUBMITTED and the compiler rejected it once, then the budget expired " +
+									"before a second attempt landed — so the fix-and-resubmit loop was cut off rather " +
+									`than shown to fail. Usually the second approval prompt. Compiler said: ${quoted}`
+								: distinct > 1
+									? `The assistant submitted ${reasons.length} times and the errors DIFFER between ` +
+										"attempts, so the feedback loop IS working: it read each rejection and changed the " +
+										"source. It ran out of budget mid-iteration. That is a pacing finding, not a " +
+										`language one. Compiler said: ${quoted}`
+									: `The assistant submitted ${reasons.length} times and every attempt failed the SAME ` +
+										"way, so it is not learning from the error text it is handed. This is the one " +
+										`shape that is a genuine model/prompt defect. Compiler said: ${quoted}`,
+					});
 				}
-				findings.push({
-					severity: reachedCompiler && (reasons.length === 1 || distinct > 1) ? "friction" : "blocker",
-					surface: "§5 chat-authored strategy",
-					note: !reachedCompiler
-						? leakedToolMarkup
-							? "The assistant's raw tool-call markup (`<|DSML|tool_calls>`) rendered as literal text " +
-								"in the chat instead of being parsed and executed. The student sees machine syntax, " +
-								`no answer, and no error. Tail: "${said}"`
-							: stalledOnApproval
-								? "NOTHING REACHED THE COMPILER: the submit sat on the Allow/Always approval gate " +
-									`until the budget expired, with ${approvals} Allow/Always click(s) landed. This is ` +
-									"an approval-gating finding, not a DSL one — the assistant never got the chance " +
-									"to be wrong. The click count separates the two causes that look identical from " +
-									"the outside: 0 means the chip never rendered for the walk to click (a UI or " +
-									"timing problem), >0 means it was clicked and the turn still did not proceed (the " +
-									`grant or the approve POST is not landing). Tail: "${said}"`
-								: "The chatbox produced nothing that reached the compiler within the budget, and no " +
-									"approval prompt was seen. §5 tells students they do not have to write the DSL by " +
-									"hand and shows a verbatim transcript of it working — for a student who cannot " +
-									`write DSL this is the whole on-ramp. Tail: "${said}"`
-						: reasons.length === 1
-							? "The assistant SUBMITTED and the compiler rejected it once, then the budget expired " +
-								"before a second attempt landed — so the fix-and-resubmit loop was cut off rather " +
-								`than shown to fail. Usually the second approval prompt. Compiler said: ${quoted}`
-							: distinct > 1
-								? `The assistant submitted ${reasons.length} times and the errors DIFFER between ` +
-									"attempts, so the feedback loop IS working: it read each rejection and changed the " +
-									"source. It ran out of budget mid-iteration. That is a pacing finding, not a " +
-									`language one. Compiler said: ${quoted}`
-								: `The assistant submitted ${reasons.length} times and every attempt failed the SAME ` +
-									"way, so it is not learning from the error text it is handed. This is the one " +
-									`shape that is a genuine model/prompt defect. Compiler said: ${quoted}`,
-				});
 			}
 			// fromChat now means "the assistant got it REGISTERED", not "the
 			// assistant emitted text that looked like a strategy". The old meaning
