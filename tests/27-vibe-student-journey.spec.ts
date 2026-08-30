@@ -342,29 +342,67 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 					.toMatch(/ready/i);
 			});
 
-			// §5 — THE VIBE STEP. Ask the assistant for the strategy; deploy what
-			// it returns, verbatim. Non-fatal: if chat cannot produce compilable
-			// source, that is recorded as a blocker for the vibe path and the walk
-			// falls back to the doc's own §4 example so the rest still runs.
+			// §5 — THE VIBE STEP. Ask the assistant to SUBMIT the strategy, not to
+			// print one.
+			//
+			// WHY THE PROMPT CHANGED (2026-08-30). Asking for a code block to paste
+			// makes the HUMAN the error channel: `send_strategy` compiles
+			// server-side and returns the compiler's verdict, but nothing in the
+			// print-then-paste flow ever calls it, so the assistant never learns it
+			// was wrong. Measured across four walks: every chat-authored strategy
+			// pasted into the form failed, and each attempt invented a DIFFERENT
+			// plausible dialect (`on bar { if … }`, `on_signal(…) { submit { tif =
+			// … } }`, `params { threshold = 0.15 }`). Chasing those with parser
+			// aliases does not converge — there is no single wrong dialect to meet.
+			// Putting the compiler in the loop does: the assistant sees the exact
+			// parse error plus a fix hint in the same turn and can correct itself.
+			//
+			// So the walk now tests the path first-run.md §5 actually documents.
+			// The chat step succeeds when a strategy REGISTERS under this student's
+			// own account — a program_hash, not a code block.
+			const chatStrategyName = `vibe_${slot}_${Date.now().toString(36)}`;
 			let src: string | null = null;
+			let registeredByChat = false;
 			try {
-				await timed(slot, "ask chat for a .lqts", "§5", async () => {
+				await timed(slot, "ask chat to SUBMIT a .lqts", "§5", async () => {
 					await gotoRedirect(page, `/studio/apps/${APP}`);
 					const composer = page.getByPlaceholder(/Ask anything|Type next message/i).first();
 					await composer.waitFor({ state: "visible", timeout: 90_000 });
 					await composer.fill(
-						"Write me a .lqts strategy that buys 25 lots at mid when the ofi_z signal is above " +
-							"0.15, with the threshold and size as params. Reply with just the code block.",
+						`Submit a .lqts strategy for me: buy 25 lots at mid when the ofi_z signal is ` +
+							`above 0.15, with the threshold and size as params. Name it ${chatStrategyName}. ` +
+							`If the compiler rejects it, read the error and fix the source, then submit again.`,
 					);
 					await composer.press("Enter");
 					// Cold sandbox spawn is paid on the first turn of a session.
+					//
+					// Success is a REGISTRY ROW, not a code block: the assistant may
+					// submit, be rejected, fix, and resubmit within this budget, and
+					// only the final state matters. `rejected_unavailable` is checked
+					// so a broken read cannot masquerade as "not registered yet".
 					await expect
-						.poll(async () => extractStrategy(await page.locator("main").innerText().catch(() => "")) ?? "", {
-							timeout: CHAT_BUDGET_MS,
-							intervals: [5_000],
-							message: "the assistant never returned a parseable .lqts code block",
-						})
+						.poll(
+							async () => {
+								const r = await page.request.get("/api/v1/me/strategies");
+								if (!r.ok()) return "";
+								const d = (await r.json().catch(() => null))?.data ?? {};
+								const row = (d.strategies ?? []).find(
+									(x: any) => x?.name === chatStrategyName && String(x?.program_hash ?? ""),
+								);
+								return row ? String(row.program_hash ?? "") : "";
+							},
+							{
+								timeout: CHAT_BUDGET_MS,
+								intervals: [5_000],
+								message:
+									`the assistant never got '${chatStrategyName}' REGISTERED (no program_hash). ` +
+									"It may have printed a code block instead of calling send_strategy, or been " +
+									"rejected repeatedly — check the rejected list on /me/strategies for the reason.",
+							},
+						)
 						.not.toEqual("");
+					registeredByChat = true;
+					// Keep the source for the record; the registry row is the verdict.
 					src = extractStrategy(await page.locator("main").innerText());
 				});
 				const chatSecs = (steps[steps.length - 1]?.ms ?? 0) / 1000;
@@ -412,7 +450,12 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 								`a student who cannot write DSL this is the whole on-ramp. Tail: "${said}"`,
 				});
 			}
-			const fromChat = Boolean(src);
+			// fromChat now means "the assistant got it REGISTERED", not "the
+			// assistant emitted text that looked like a strategy". The old meaning
+			// counted a plausible-looking code block as a win even when it never
+			// compiled — which is exactly how the vibe path looked healthier than
+			// it was.
+			const fromChat = registeredByChat;
 			if (!src) {
 				src = [
 					"strategy ofi_z_momentum {",
@@ -424,13 +467,19 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 				].join("\n");
 			}
 
-			const strategyName = `vibe_${slot}_${Date.now().toString(36)}`;
+			const strategyName = registeredByChat
+				? chatStrategyName
+				: `vibe_${slot}_${Date.now().toString(36)}`;
 			// The registry keys on the identifier inside the source, so rename the
 			// program to match what we register it as — otherwise two students'
 			// chat-authored strategies collide on the assistant's favourite name.
 			const srcNamed = src.replace(/^\s*strategy\s+[A-Za-z_][A-Za-z0-9_]*/, `strategy ${strategyName}`);
 
-			await timed(slot, "deploy via the Strategies form", "§5", async () => {
+			// The form path is the FALLBACK now. When the assistant already got the
+			// strategy registered, deploying again would submit a second copy and
+			// then measure the copy — so skip it and keep what chat achieved.
+			if (!registeredByChat)
+			await timed(slot, "deploy via the Strategies form (fallback)", "§5", async () => {
 				await gotoRedirect(page, `/studio/a/${APP}/strategies`);
 				await page.getByLabel(/Strategy Name/i).fill(strategyName);
 				await page.getByLabel(/^Version$/i).fill("1.0.0");
@@ -463,7 +512,12 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 			// here to kill.
 			let rejection = "";
 			let rejectionUnavailable = "";
-			const compiled = await timed(slot, "strategy compiles (program_hash)", "§5", async () => {
+			// Already proven when chat registered it — the chat step's own success
+			// condition WAS a non-empty program_hash. Re-polling would just restate
+			// it, and a second timed step would double-count the wall clock.
+			const compiled = registeredByChat
+				? "(registered by chat)"
+				: await timed(slot, "strategy compiles (program_hash)", "§5", async () => {
 				let hash = "";
 				await expect
 					.poll(
