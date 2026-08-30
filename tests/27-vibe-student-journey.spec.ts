@@ -363,6 +363,7 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 			const chatStrategyName = `vibe_${slot}_${Date.now().toString(36)}`;
 			let src: string | null = null;
 			let registeredByChat = false;
+			let approvals = 0;
 			try {
 				await timed(slot, "ask chat to SUBMIT a .lqts", "§5", async () => {
 					await gotoRedirect(page, `/studio/apps/${APP}`);
@@ -374,6 +375,40 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 							`If the compiler rejects it, read the error and fix the source, then submit again.`,
 					);
 					await composer.press("Enter");
+
+					// APPROVE THE TOOL CALL.
+					//
+					// `lqt_mailbox_submit` is a WRITE, so the chat surfaces an
+					// Allow / Always / Deny prompt and blocks until someone clicks.
+					// Measured 2026-08-30: all three students' submits sat on that
+					// prompt for the full budget — "Working… — 141s" — and nothing
+					// ever reached the inbox. The assistant had done its job; the
+					// turn was waiting on a human.
+					//
+					// A student clicks it. The walk has to as well, or it measures a
+					// modal instead of the submit path. Clicking "Always" once per
+					// session keeps a multi-step fix-and-resubmit loop from stopping
+					// on every attempt.
+					//
+					// Runs in the background against the SAME budget as the poll
+					// below: the prompt can appear more than once (a rejected submit
+					// is followed by another), so this keeps watching rather than
+					// clicking once.
+					const approveDeadline = Date.now() + CHAT_BUDGET_MS;
+					const approver = (async () => {
+						while (Date.now() < approveDeadline) {
+							const btn = page
+								.getByRole("button", { name: /^(Always|Allow)$/i })
+								.first();
+							if (await btn.isVisible().catch(() => false)) {
+								await btn.click().catch(() => {});
+								approvals += 1;
+							}
+							await page.waitForTimeout(1_500);
+						}
+					})();
+					void approver;
+
 					// Cold sandbox spawn is paid on the first turn of a session.
 					//
 					// Success is a REGISTRY ROW, not a code block: the assistant may
@@ -405,6 +440,21 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 					// Keep the source for the record; the registry row is the verdict.
 					src = extractStrategy(await page.locator("main").innerText());
 				});
+				if (approvals > 0) {
+					findings.push({
+						severity: "friction",
+						surface: "§5 chat submit — tool approval prompt",
+						note:
+							`Submitting from chat raised an Allow/Always/Deny prompt ${approvals} time(s) for ` +
+							"`lqt_mailbox_submit`, and the turn BLOCKS until it is clicked. The app declares " +
+							"`approval_policy: {default: auto}`, so either that policy is not honoured for this " +
+							"tool or the sandbox gates writes independently of it. A human clicks through and " +
+							"may reasonably want to — it is a write — but §5 does not mention it, and anything " +
+							"unattended (a scheduled loop, a scripted walk) stalls silently until it times out. " +
+							"Measured 2026-08-30: three of three submits sat on this prompt for the full budget " +
+							"and nothing reached the inbox.",
+					});
+				}
 				const chatSecs = (steps[steps.length - 1]?.ms ?? 0) / 1000;
 				if (chatSecs > 120) {
 					findings.push({
