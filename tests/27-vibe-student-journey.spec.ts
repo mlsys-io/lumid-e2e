@@ -364,6 +364,7 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 			let src: string | null = null;
 			let registeredByChat = false;
 			let approvals = 0;
+			let approverDone = false;
 			try {
 				await timed(slot, "ask chat to SUBMIT a .lqts", "§5", async () => {
 					await gotoRedirect(page, `/studio/apps/${APP}`);
@@ -394,20 +395,29 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 					// below: the prompt can appear more than once (a rejected submit
 					// is followed by another), so this keeps watching rather than
 					// clicking once.
+					// Stops when the step ends, not when the budget does. Each student
+					// gets a fresh context that is closed after their walk, and a
+					// fire-and-forget loop outliving it throws "Target page, context
+					// or browser has been closed" — which failed run 14 on test
+					// plumbing while the product half had actually just succeeded.
 					const approveDeadline = Date.now() + CHAT_BUDGET_MS;
 					const approver = (async () => {
-						while (Date.now() < approveDeadline) {
-							const btn = page
-								.getByRole("button", { name: /^(Always|Allow)$/i })
-								.first();
-							if (await btn.isVisible().catch(() => false)) {
-								await btn.click().catch(() => {});
-								approvals += 1;
+						try {
+							while (!approverDone && Date.now() < approveDeadline) {
+								const btn = page
+									.getByRole("button", { name: /^(Always|Allow)$/i })
+									.first();
+								if (await btn.isVisible().catch(() => false)) {
+									await btn.click().catch(() => {});
+									approvals += 1;
+								}
+								await page.waitForTimeout(1_500);
 							}
-							await page.waitForTimeout(1_500);
+						} catch {
+							// The page went away, or a click raced a re-render. Either way
+							// this is a helper: it must never be the reason a run fails.
 						}
 					})();
-					void approver;
 
 					// Cold sandbox spawn is paid on the first turn of a session.
 					//
@@ -439,6 +449,9 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 					registeredByChat = true;
 					// Keep the source for the record; the registry row is the verdict.
 					src = extractStrategy(await page.locator("main").innerText());
+				}).finally(async () => {
+					approverDone = true;
+					await approver.catch(() => {});
 				});
 				if (approvals > 0) {
 					findings.push({
