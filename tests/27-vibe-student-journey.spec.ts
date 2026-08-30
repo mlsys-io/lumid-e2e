@@ -680,6 +680,12 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 				pat,
 				sub,
 				strategyName,
+				// EVERY name this student created, not just the one that landed. A
+				// student who was rejected and retried owns several rows, and the
+				// cross-tenant check below must not count their own earlier attempt
+				// as somebody else's — it did on 2026-08-30 and reported a leak that
+				// did not exist (both rows verified to the same tenant in the DB).
+				ownNames: [strategyName, chatStrategyName].filter(Boolean),
 				strategySrc: srcNamed,
 				strategyFromChat: fromChat,
 				claimId: "",
@@ -775,7 +781,8 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 				const p = x?.payload ?? {};
 				return Boolean(p?.strategy?.dsl ?? p?.dsl);
 			});
-			const foreign = withSrc.filter((x) => String(x?.name ?? "") !== a.strategyName);
+			const own = new Set((a as any).ownNames ?? [a.strategyName]);
+			const foreign = withSrc.filter((x) => !own.has(String(x?.name ?? "")));
 			if (foreign.length > 0) {
 				findings.push({
 					severity: "blocker",
