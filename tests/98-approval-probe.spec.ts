@@ -68,11 +68,21 @@ test("probe: what does the approval gate render", async ({ page, baseURL }) => {
 				const cnt = await (loc as any).count?.().catch(() => "n/a");
 				console.log(`[probe]   ${label} → isVisible=${vis} count=${cnt}`);
 			}
+			// HOW MANY chips are on the page. If the live prompt is preceded by a
+			// spent one, `.first()` clicks the corpse and the real prompt waits —
+			// which is the hypothesis run20 could not distinguish from a hang.
+			const chipCount = await page.getByRole("button", { name: /^Always$/i }).count().catch(() => -1);
+			console.log(`[probe]   Always-chips on page = ${chipCount}`);
 			const clicked = await always.click({ timeout: 5_000 }).then(() => "OK").catch((e) => `FAILED: ${String(e).slice(0, 120)}`);
 			console.log(`[probe]   click(Always) → ${clicked}`);
-			await page.waitForTimeout(4_000);
+			await page.waitForTimeout(5_000);
+			// v0.5.297 emits an info notice on 404. Its presence after the FIRST
+			// click is the answer: it means the id we clicked was already spent.
+			const notice = await page.evaluate(() =>
+				/(already handled or had expired|Could not send that approval)[^\n]{0,120}/.exec(document.body.innerText)?.[0] ?? "(none)");
 			const after = await page.evaluate(() => /Running\s+\S+/.exec(document.body.innerText)?.[0] ?? "(none)");
-			console.log(`[probe]   after click, activity="${after}"`);
+			const stillChips = await page.getByRole("button", { name: /^Always$/i }).count().catch(() => -1);
+			console.log(`[probe]   after click: activity="${after}" notice="${notice}" chipsLeft=${stillChips}`);
 			break;
 		}
 		await page.waitForTimeout(3_000);
