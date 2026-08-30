@@ -484,22 +484,26 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 				}).finally(async () => {
 					approverDone = true;
 					await approver.catch(() => {});
+					// REPORT FROM `finally`, NOT AFTER THE AWAIT. This used to sit
+					// after `await timed(...)` inside the try, so a failed poll threw
+					// straight past it — and the approval count went unreported in
+					// exactly the runs where it was the question being asked. It cost
+					// a wrong diagnosis on 2026-08-30: "the approver clicked nothing"
+					// was inferred from a finding that could not have been emitted.
+					if (approvals > 0) {
+						findings.push({
+							severity: "friction",
+							surface: "§5 chat submit — tool approval prompt",
+							note:
+								`The walk clicked Allow/Always ${approvals} time(s) for \`lqt_mailbox_submit\`. ` +
+								"The turn BLOCKS on that prompt: the app declares `approval_policy: {default: auto}`, " +
+								"so either that policy is not honoured for this tool or the sandbox gates writes " +
+								"independently of it. A human clicks through and may reasonably want to — it is a " +
+								"write — but §5 does not mention it, and anything unattended (a scheduled loop, a " +
+								"scripted walk) stalls silently until it times out.",
+						});
+					}
 				});
-				if (approvals > 0) {
-					findings.push({
-						severity: "friction",
-						surface: "§5 chat submit — tool approval prompt",
-						note:
-							`Submitting from chat raised an Allow/Always/Deny prompt ${approvals} time(s) for ` +
-							"`lqt_mailbox_submit`, and the turn BLOCKS until it is clicked. The app declares " +
-							"`approval_policy: {default: auto}`, so either that policy is not honoured for this " +
-							"tool or the sandbox gates writes independently of it. A human clicks through and " +
-							"may reasonably want to — it is a write — but §5 does not mention it, and anything " +
-							"unattended (a scheduled loop, a scripted walk) stalls silently until it times out. " +
-							"Measured 2026-08-30: three of three submits sat on this prompt for the full budget " +
-							"and nothing reached the inbox.",
-					});
-				}
 				const chatSecs = (steps[steps.length - 1]?.ms ?? 0) / 1000;
 				if (chatSecs > 120) {
 					findings.push({
@@ -558,9 +562,13 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 								"in the chat instead of being parsed and executed. The student sees machine syntax, " +
 								`no answer, and no error. Tail: "${said}"`
 							: stalledOnApproval
-								? "NOTHING REACHED THE COMPILER: the submit sat on the Allow/Always approval prompt " +
-									"until the budget expired. This is an approval-gating finding, not a DSL one — " +
-									`the assistant never got the chance to be wrong. Tail: "${said}"`
+								? "NOTHING REACHED THE COMPILER: the submit sat on the Allow/Always approval gate " +
+									`until the budget expired, with ${approvals} Allow/Always click(s) landed. This is ` +
+									"an approval-gating finding, not a DSL one — the assistant never got the chance " +
+									"to be wrong. The click count separates the two causes that look identical from " +
+									"the outside: 0 means the chip never rendered for the walk to click (a UI or " +
+									"timing problem), >0 means it was clicked and the turn still did not proceed (the " +
+									`grant or the approve POST is not landing). Tail: "${said}"`
 								: "The chatbox produced nothing that reached the compiler within the budget, and no " +
 									"approval prompt was seen. §5 tells students they do not have to write the DSL by " +
 									"hand and shows a verbatim transcript of it working — for a student who cannot " +
