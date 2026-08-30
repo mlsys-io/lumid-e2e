@@ -371,6 +371,16 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 			let registeredByChat = false;
 			let approvals = 0;
 			let approverDone = false;
+			// DECLARED OUT HERE ON PURPOSE. The `.finally()` below is chained onto
+			// the OUTER `timed(...)` promise, so it cannot see bindings made inside
+			// the callback. When this was a `const` in there, the finally threw
+			// `ReferenceError: approver is not defined` on its first statement —
+			// every student, every run, silently. Two consequences, both of which
+			// cost a wrong diagnosis: the approval count below it never executed
+			// (so "the approver clicked nothing" was read off a line that could not
+			// run), and the throw landed in the classifier catch, manufacturing a
+			// chat-failure finding for students whose strategy had REGISTERED.
+			let approver: Promise<void> = Promise.resolve();
 			try {
 				await timed(slot, "ask chat to SUBMIT a .lqts", "§5", async () => {
 					await gotoRedirect(page, `/studio/apps/${APP}`);
@@ -407,7 +417,7 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 					// or browser has been closed" — which failed run 14 on test
 					// plumbing while the product half had actually just succeeded.
 					const approveDeadline = Date.now() + CHAT_BUDGET_MS;
-					const approver = (async () => {
+					approver = (async () => {
 						try {
 							while (!approverDone && Date.now() < approveDeadline) {
 								// Try the exact-name role match first, then fall back to any
