@@ -58,7 +58,42 @@ const NUM_STUDENTS = Math.max(2, Number.parseInt(process.env.E2E_VIBE_STUDENTS |
 // The instrument every backtest names. Left blank the consumer defaults the
 // symbol to SYNTH — a generator, not a market — and returns a synthetic run
 // that reads like a result (first-run.md §6). Naming it is the whole point.
-const SYMBOL = process.env.E2E_VIBE_SYMBOL || "KXBTCD-26AUG2519-T78899.99";
+//
+// RESOLVED AT RUN TIME, and that is not a nicety. The replay window is the last
+// 7 days, so ANY ticker pinned in source goes dead within a week — after which
+// the run falls back to the synthetic generator and this test asserts happily
+// against exactly the outcome the constant exists to prevent. It fails open,
+// silently, which is the worst way for a test to be wrong. Measured 2026-09-02:
+// the pinned August ticker replayed `prints_replayed: 0`.
+//
+// Precedence: E2E_VIBE_SYMBOL (explicit operator choice) > the live-instruments
+// endpoint > the literal, which is a LAST RESORT and is expected to be stale.
+const SYMBOL_FALLBACK = "KXBTCD-26SEP0211-T77099.99";
+let SYMBOL = process.env.E2E_VIBE_SYMBOL || SYMBOL_FALLBACK;
+
+async function resolveLiveSymbol(
+	api: APIRequestContext,
+	base: string,
+	pat: string,
+): Promise<string> {
+	if (process.env.E2E_VIBE_SYMBOL) return process.env.E2E_VIBE_SYMBOL;
+	try {
+		const r = await api.get(
+			`${base}/lqt-data/market/kalshi-active-instruments?since_secs=3600&limit=1`,
+			{ headers: { Authorization: `Bearer ${pat}` }, failOnStatusCode: false },
+		);
+		if (r.ok()) {
+			const body = await r.json();
+			const row = Array.isArray(body) ? body[0] : body?.rows?.[0];
+			const id = String(row?.instrument_id ?? "");
+			if (id) return id;
+		}
+	} catch {
+		// A discovery miss must not fail the suite here — it degrades to the
+		// stale literal, and the run's own `replay` label reports the damage.
+	}
+	return SYMBOL_FALLBACK;
+}
 
 // A backtest is submitted then polled, "usually minutes later". Bounded so a
 // worker backlog is reported as a backlog rather than hanging the suite.
@@ -911,6 +946,9 @@ test.describe("27 — can a vibing student get a real number? [long]", () => {
 		testInfo.setTimeout(eligible.length * (VERDICT_POLL_MS + 60_000) + 120_000);
 		const api = await playwright.request.newContext();
 		const base = testInfo.project.use.baseURL ?? "https://lum.id";
+		// One resolve for the whole run: every student must name the SAME
+		// instrument or the per-student results are not comparable.
+		if (eligible.length) SYMBOL = await resolveLiveSymbol(api, base, eligible[0].pat ?? "");
 		for (const s of eligible) {
 
 			// §6 — name the instrument. Blank defaults the symbol to SYNTH, and the
