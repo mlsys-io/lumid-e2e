@@ -197,7 +197,9 @@ async function openStrategyDetail(page: Page, strategyId: string): Promise<void>
 	await expect(row, "strategy row missing from the list").toBeVisible({ timeout: 60_000 });
 	await row.getByRole("cell").first().click();
 	await expect(page).toHaveURL(
-		new RegExp(`/studio/a/${APP}/strategy\\?strategy_id=${strategyId}`),
+		new RegExp(
+			`/studio/(a/${APP}/strategy\\?|apps/${APP}\\?.*surface=strategy.*)strategy_id=${strategyId}`,
+		),
 		{ timeout: 20_000 },
 	);
 }
@@ -435,8 +437,18 @@ test.describe("22 — quant-research: the quant-researcher walk", () => {
 		// Click a cell, not the row centre: the row's right-hand cell holds the
 		// action buttons and a centre click could land on one.
 		await row.getByRole("cell").first().click();
+		// TWO shapes are legitimate and the app may use either:
+		//   /studio/a/:app/:surface?strategy_id=      (App.tsx:718, full page)
+		//   /studio/apps/:app?surface=…&strategy_id=  (App.tsx:770, workspace)
+		// This asserted only the first while the row click navigates to the
+		// second, so the step failed 20s after a deploy that had SUCCEEDED —
+		// the strategy_id was in the received URL all along. Accept either
+		// rather than re-pinning to whichever is current; what the step is
+		// really checking is that the click carried a strategy_id through.
 		await expect(page).toHaveURL(
-			new RegExp(`/studio/a/${APP}/strategy\\?strategy_id=`),
+			new RegExp(
+				`/studio/(a/${APP}/strategy\\?|apps/${APP}\\?.*surface=strategy.*)strategy_id=`,
+			),
 			{ timeout: 20_000 },
 		);
 		strategyId = new URL(page.url()).searchParams.get("strategy_id") ?? "";
