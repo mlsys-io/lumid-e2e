@@ -36,39 +36,54 @@ test.beforeAll(async ({ playwright, baseURL }) => {
 });
 test.afterAll(async () => { await owner?.dispose(); });
 
-async function openExperiments(page: Page, app: string) {
-	await page.goto(`/studio/a/${app}/experiments`);
-	await expect(page.getByText(/experiment/i).first()).toBeVisible({ timeout: 25_000 });
+// TWO-TAB SHAPE (2026-09-04 redesign, plan review-a-previous-work-glimmering-
+// taco.md): there is deliberately NO Experiments tab. Experiments render IN
+// PLACE on the loop that feeds them — the workflow observability panel's
+// "Metric & arms" section (ui v0.5.326+). These assertions are what a session
+// reads to learn the intended shape: asserting the old tab here is exactly
+// what caused a peer session to "restore" it as a regression (0.7.37/0.9.14,
+// both reverted). The arms UI itself (ExperimentsPanel) is unchanged and is
+// reached through the workflow page.
+async function openExperiments(page: Page, app: string, loop: string) {
+	await page.goto(`/studio/apps/${app}?surface=workflows&selected=${loop}`);
+	await expect(page.getByText(/metric & arms/i).first()).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe("@experiments control plane — UI structure", () => {
 	test.beforeEach(async ({ page }) => { await loginAsAdmin(page); });
 
-	test("the app panel exposes an Experiments tab", async ({ page }) => {
-		await page.goto(`/studio/a/${CONSULTANT}`);
-		const tab = page.getByRole("link", { name: /experiments/i })
-			.or(page.getByRole("button", { name: /experiments/i })).first();
-		await expect(tab).toBeVisible({ timeout: 25_000 });
+	test("the app panel has NO Experiments tab — arms live on the workflow", async ({ page }) => {
+		for (const app of [CONSULTANT, QUANT]) {
+			await page.goto(`/studio/apps/${app}`);
+			await expect(page.getByRole("link", { name: /^workflows$/i })
+				.or(page.getByRole("button", { name: /^workflows$/i })).first())
+				.toBeVisible({ timeout: 25_000 });
+			await expect(page.getByRole("link", { name: /^experiments$/i })).toHaveCount(0);
+			await expect(page.getByRole("button", { name: /^experiments$/i })).toHaveCount(0);
+		}
 	});
 
-	test("quant-research gained the tab it never had", async ({ page }) => {
-		await page.goto(`/studio/a/${QUANT}`);
-		const tab = page.getByRole("link", { name: /experiments/i })
-			.or(page.getByRole("button", { name: /experiments/i })).first();
-		await expect(tab).toBeVisible({ timeout: 25_000 });
+	test("a loop with metric+dataset shows Metric & arms in place", async ({ page }) => {
+		await openExperiments(page, QUANT, "backtest");
+		await expect(page.getByText(/backtest evidence/i).first()).toBeVisible({ timeout: 25_000 });
 	});
 
 	test("a passive arm explains itself instead of offering a dead button", async ({ page }) => {
 		// quant-research's `current` declares no config; dispatching it fires the
 		// loop with no strategy ("strategy is empty"). A button that cannot
 		// succeed is worse than no button.
-		await openExperiments(page, QUANT);
+		await openExperiments(page, QUANT, "backtest");
+		// The evidence card must be EXPANDED to show arms; the collapsed card
+		// advertises them ("2 arms") without the buttons.
+		await page.getByText(/backtest evidence/i).first().click();
 		await expect(page.getByText(/measured passively/i).first()).toBeVisible({ timeout: 25_000 });
-		await expect(page.getByRole("button", { name: /run this arm/i })).toHaveCount(0);
+		// `current` gets no button; `tape_covered` needs a SUBJECT so its
+		// button routes through the rail ("Run via chat"), never a bare POST.
+		await expect(page.getByRole("button", { name: /^run this arm$/i })).toHaveCount(0);
 	});
 
 	test("no unearned verdict is rendered", async ({ page }) => {
-		await openExperiments(page, CONSULTANT);
+		await openExperiments(page, CONSULTANT, "case_eval");
 		await expect(page.getByText(/✓ .*criteria met/i)).toHaveCount(0);
 	});
 });

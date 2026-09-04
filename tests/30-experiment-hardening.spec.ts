@@ -187,7 +187,10 @@ test.describe("@wide surfaces render across apps", () => {
 });
 
 test.describe("@wide the fleet actually received the declarations", () => {
-	test("the published spec carries both experiments and the tab", async () => {
+	test("the published spec carries both experiments (no tab — they render in place)", async () => {
+		// Two-tab redesign 2026-09-04: experiments have no tab of their own;
+		// they render on the loop that feeds them (Metric & arms). This test
+		// asserts the DECLARATIONS only.
 		const r = await owner.get(`/api/v1/me/apps/${QUANT}/experiments`);
 		const ids = ((await r.json()).data?.experiments ?? []).map((e: any) => e.id).sort();
 		expect(ids).toEqual(["backtest_evidence", "backtest_performance"]);
