@@ -129,15 +129,21 @@ test.describe("@hard access control", () => {
 });
 
 test.describe("@hard honesty invariants", () => {
-	test("the backtest surface no longer claims a backtest registers a strategy", async ({ page }) => {
+	test("nothing claims a backtest registers a strategy", async () => {
 		// This told 102 tenants the opposite of the truth: the worker builds
 		// --features pg,replay, so the local-replay dispatch posts no mailbox
-		// message and a backtest is a DRY RUN.
-		await loginAsAdmin(page);
-		await page.goto(`/studio/a/${QUANT}/backtests`);
-		await expect(page.getByText(/dry run/i).first()).toBeVisible({ timeout: 25_000 });
-		await expect(page.getByText(/it is not a dry run/i)).toHaveCount(0);
-		await expect(page.getByText(/Backtest \(registers\)/)).toHaveCount(0);
+		// message and a backtest is a DRY RUN. The dedicated backtests surface
+		// was retired in the two-tab redesign, so the honesty claim now lives
+		// in the LOOP description (rendered on the Workflows row/panel) — assert
+		// it at the contract, which every surface reads.
+		const r = await owner.get(`/api/v1/me/workflows`);
+		const rows = ((await r.json()).data?.workflows ?? [])
+			.filter((w: any) => w.app === QUANT && w.name === "backtest");
+		expect(rows.length, "backtest loop missing from /me/workflows").toBeGreaterThan(0);
+		const desc = String(rows[0].description ?? "");
+		expect(desc).toMatch(/dry run/i);
+		expect(desc).not.toMatch(/it is not a dry run/i);
+		expect(desc).not.toMatch(/Backtest \(registers\)/);
 	});
 
 	test("a synthetic result can never occupy a real-performance column", async () => {

@@ -83,7 +83,10 @@ test.describe("@experiments control plane — UI structure", () => {
 	});
 
 	test("no unearned verdict is rendered", async ({ page }) => {
-		await openExperiments(page, CONSULTANT, "case_eval");
+		// On QUANT, not CONSULTANT: the browser session (e2e-admin) has
+		// quant-research installed but not mbb-consultant, and a workflow page
+		// for an uninstalled app never reaches Metric & arms.
+		await openExperiments(page, QUANT, "backtest");
 		await expect(page.getByText(/✓ .*criteria met/i)).toHaveCount(0);
 	});
 });
