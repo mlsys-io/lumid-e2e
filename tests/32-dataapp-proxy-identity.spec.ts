@@ -25,7 +25,12 @@ test.describe("32 — dataapp-proxy forwards caller identity", () => {
 
 	test("a signed-in user sees their OWN scoped rows, not the proxy's", async ({ page, baseURL }) => {
 		await page.goto(`${baseURL}/auth/login`);
-		await page.getByLabel(/email/i).fill(user.email);
+		// Wait for the form before filling. Under a full-suite run the app is
+		// loaded enough that fill()'s 15s default expires on a page that is
+		// simply still rendering -- which reads as a product failure and is not.
+		const email = page.getByLabel(/email/i);
+		await email.waitFor({ state: "visible", timeout: 60_000 });
+		await email.fill(user.email);
 		await page.getByLabel(/password/i).fill(user.password);
 		await page.getByRole("button", { name: /sign in/i }).click();
 		await page.waitForURL(/\/(studio|app)/, { timeout: 30_000 });
