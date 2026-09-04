@@ -594,16 +594,20 @@ test.describe("22 — quant-research: the quant-researcher walk", () => {
 					timeout: 240_000,
 					intervals: [5_000],
 					message:
-						"no chat bound to this strategy. Before suspecting the strategy_id " +
-						"round-trip (identity v0.5.221), check whether a chat rail is MOUNTED " +
-						"on the page Discuss was clicked from. Measured 2026-09-04: the failing " +
-						"run's page snapshot shows the walk's own row, `Discuss` [active] — so " +
-						"the click landed — and ZERO chat inputs. `/studio/a/:app/:surface` is " +
-						"the full-page surface route and docks no rail, so studio:ask autosend " +
-						"dispatches into nothing and no chat row is ever written. The workspace " +
-						"route (/studio/apps/:app?surface=…) does mount one, which is why this " +
-						"passes intermittently depending on where the row click lands. Raising " +
-						"this timeout does NOT help — verified at 300s.",
+						"no chat bound to this strategy. WHAT THE EVIDENCE SHOWS (2026-09-04, " +
+						"after three wrong diagnoses — record them so the next reader skips them): " +
+						"(1) NOT the strategy_id round-trip (identity v0.5.221) — quant-research " +
+						"chats carrying a strategy_id exist. (2) NOT a missing chat rail: the " +
+						"failing page DOES mount one (aria-label 'Message the assistant'; an " +
+						"earlier read grepped the placeholder 'Ask anything' and wrongly concluded " +
+						"otherwise). (3) NOT the poll budget — verified at 300s, and no row " +
+						"appeared afterwards either. What IS observed: identity logs " +
+						"`POST /api/v1/me/agent/chat/stream | 200 | 4m0s` for the Discuss turn — " +
+						"a clean four-minute boundary, returning 200 — and me_chats gains no row. " +
+						"The row is written on COMPLETION, so a turn that hits that ceiling " +
+						"persists nothing. Chase the 4m0s ceiling (no explicit 240s cap exists in " +
+						"identity or the SPA — suspect the proxy or the model gateway), not this " +
+						"assertion."
 				},
 			)
 			.toBeGreaterThan(0);
