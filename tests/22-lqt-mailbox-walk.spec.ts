@@ -182,6 +182,17 @@ async function resolveInviteCode(baseURL: string): Promise<string> {
  */
 async function revealFixtureRows(page: Page): Promise<void> {
 	const toggle = page.getByRole("button", { name: /^\d+ hidden$/ }).first();
+	// WAIT for it. The toggle only renders once the table's rows have arrived
+	// (`hiddenRows.length ? <button…> : null`), and the caller gets here as soon
+	// as the HEADING is visible — which happens first. Checking count()
+	// immediately therefore saw 0, skipped the click, and left this walk's own
+	// `e2e_walk_…` row filtered out; the row assertion then timed out 60s later
+	// saying "strategy row missing from the list", which reads as a
+	// registration failure rather than a race against a render.
+	//
+	// Swallowing the timeout is deliberate: a surface with nothing hidden never
+	// renders the toggle, and that is not an error.
+	await toggle.waitFor({ state: "visible", timeout: 30_000 }).catch(() => {});
 	if (await toggle.count().catch(() => 0)) {
 		await toggle.click().catch(() => {});
 	}
@@ -583,8 +594,16 @@ test.describe("22 — quant-research: the quant-researcher walk", () => {
 					timeout: 240_000,
 					intervals: [5_000],
 					message:
-						"no chat bound to this strategy — the strategy_id round-trip regressed " +
-						"(the bug fixed in identity v0.5.221)",
+						"no chat bound to this strategy. Before suspecting the strategy_id " +
+						"round-trip (identity v0.5.221), check whether a chat rail is MOUNTED " +
+						"on the page Discuss was clicked from. Measured 2026-09-04: the failing " +
+						"run's page snapshot shows the walk's own row, `Discuss` [active] — so " +
+						"the click landed — and ZERO chat inputs. `/studio/a/:app/:surface` is " +
+						"the full-page surface route and docks no rail, so studio:ask autosend " +
+						"dispatches into nothing and no chat row is ever written. The workspace " +
+						"route (/studio/apps/:app?surface=…) does mount one, which is why this " +
+						"passes intermittently depending on where the row click lands. Raising " +
+						"this timeout does NOT help — verified at 300s.",
 				},
 			)
 			.toBeGreaterThan(0);
