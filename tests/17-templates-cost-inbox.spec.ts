@@ -124,7 +124,33 @@ test.describe("17 — templates + cost + inbox polish (G1/G2/G3)", () => {
 		// Either there's content (some drafts/cycles) OR the empty state
 		// renders. Both are valid for this assertion; we only require
 		// the polished CTA to appear if the feed is truly empty.
-		const hasContent = await page.locator('[role="article"], li').first().isVisible().catch(() => false);
+		// Detect content by ROLE, not by tag. The feed renders its rows as
+		// elements carrying role="listitem" rather than literal <li>, so the CSS
+		// `li` matched nothing, hasContent came out false with SEVEN drafts on
+		// screen ("All 7" / "Drafts 7"), and the test then demanded an empty
+		// state that correctly was not there. A stale selector reported as a
+		// missing CTA.
+		// Scope to MAIN, and by ROLE not tag. Two things defeated the original
+		// `page.locator('[role="article"], li')`: the feed renders rows as
+		// role="listitem" rather than literal <li>, and the SIDEBAR carries its
+		// own listitems (the conversation list) whose first match is hidden — so
+		// `.first().isVisible()` answered false with SEVEN drafts on screen
+		// ("All 7" / "Drafts 7"). The test then demanded an empty state that
+		// correctly was not there: a stale selector reported as a missing CTA.
+		// WAIT for the feed to settle before branching. The original check read
+		// `.isVisible()` the instant after navigation, while the feed was still
+		// loading, so hasContent was false for EVERY run — and the test then
+		// demanded the empty state on an account with seven drafts. The failure
+		// surfaced as a missing "Inbox zero" CTA, which is the one thing that
+		// was behaving correctly.
+		//
+		// Also matches by ROLE, not tag: the rows carry role="listitem" rather
+		// than literal <li>, and scoping to `main` keeps the SIDEBAR's own
+		// conversation listitems out of it.
+		const item = page.locator('main [role="article"], main [role="listitem"], main li').first();
+		const empty = page.getByText(/Inbox zero/i);
+		await expect(item.or(empty).first()).toBeVisible({ timeout: 20_000 });
+		const hasContent = await item.isVisible().catch(() => false);
 		if (!hasContent) {
 			await expect(page.getByText(/Inbox zero/i)).toBeVisible({ timeout: 10_000 });
 			await expect(page.getByRole("button", { name: /New workflow/i })).toBeVisible();
