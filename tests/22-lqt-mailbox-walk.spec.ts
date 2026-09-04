@@ -594,20 +594,18 @@ test.describe("22 — quant-research: the quant-researcher walk", () => {
 					timeout: 240_000,
 					intervals: [5_000],
 					message:
-						"no chat bound to this strategy. WHAT THE EVIDENCE SHOWS (2026-09-04, " +
-						"after three wrong diagnoses — record them so the next reader skips them): " +
-						"(1) NOT the strategy_id round-trip (identity v0.5.221) — quant-research " +
-						"chats carrying a strategy_id exist. (2) NOT a missing chat rail: the " +
-						"failing page DOES mount one (aria-label 'Message the assistant'; an " +
-						"earlier read grepped the placeholder 'Ask anything' and wrongly concluded " +
-						"otherwise). (3) NOT the poll budget — verified at 300s, and no row " +
-						"appeared afterwards either. What IS observed: identity logs " +
-						"`POST /api/v1/me/agent/chat/stream | 200 | 4m0s` for the Discuss turn — " +
-						"a clean four-minute boundary, returning 200 — and me_chats gains no row. " +
-						"The row is written on COMPLETION, so a turn that hits that ceiling " +
-						"persists nothing. Chase the 4m0s ceiling (no explicit 240s cap exists in " +
-						"identity or the SPA — suspect the proxy or the model gateway), not this " +
-						"assertion."
+						"no chat bound to this strategy. STATE 2026-09-04, after ui v0.5.320: " +
+						"Discuss now REACHES a chat — identity logs one " +
+						"POST /api/v1/me/agent/chat/stream per run, where before the fix there " +
+						"were none in 5h (the full-page surface route docks no rail, so the " +
+						"studio:ask event had no listener; askOrStash now parks it and navigates " +
+						"to the workspace, which mounts one). What remains is DURATION: the turn " +
+						"ran 4m0s and this poll aborts it at 240s, so nothing persists — the row " +
+						"is written on completion. The real fix is not a bigger timeout: " +
+						"StudioChat has an EARLY SAVE meant to write the row on the USER turn, " +
+						"and it did not fire. Chase that. Ruled out: the strategy_id round-trip " +
+						"(v0.5.221), and any fixed server-side ceiling — the 4m0s tracks THIS " +
+						"timeout, not a cap."
 				},
 			)
 			.toBeGreaterThan(0);
