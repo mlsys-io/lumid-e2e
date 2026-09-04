@@ -27,23 +27,46 @@ async function login(page: Page, baseURL: string, user: { email: string; passwor
   await page.waitForURL(/\/(dashboard|account|app|studio)/, { timeout: 20_000 });
 }
 
+// The SQL editor, NOT "any textarea".
+//
+// The console page now docks the chat rail, which brings its own textarea
+// ("Ask anything…" / aria-label "Message the assistant"), so a bare textarea
+// locator resolves to TWO elements and every fill() dies on a strict-mode
+// violation — a page-composition change breaking a selector that was never
+// specific enough, not a console regression.
+const editor = (page: Page) => page.locator('textarea[placeholder^="SELECT"]');
+
 async function openQueryTab(page: Page, baseURL: string) {
   await page.goto(`${baseURL}${PAGE}`);
   await page.getByRole("button", { name: /^Query$/ }).click();
   // The console is a lazy chunk — wait for its editor, not just the tab click.
-  await expect(page.locator("textarea")).toBeVisible({ timeout: 20_000 });
+  await expect(editor(page)).toBeVisible({ timeout: 20_000 });
 }
 
+const METER = /\d+ rows?\s+·\s+\d+ ms/;
+
 async function run(page: Page, sql: string) {
-  const ta = page.locator("textarea");
+  // Snapshot the result meter BEFORE running. The console keeps the previous
+  // query's result on screen, so polling for "is a table visible?" answered
+  // YES instantly against the STALE one: `run()` returned before the new query
+  // had come back, and the caller's assertion then ran against the old rows.
+  // Seen as `SELECT 1 AS one` failing to find its own `one` header while the
+  // page showed `20 rows · 180 ms` from an earlier query — a freshness bug
+  // wearing a permissions failure's face.
+  const meter = page.getByText(METER).first();
+  const before = await meter.textContent().catch(() => null);
+
+  const ta = editor(page);
   await ta.fill(sql);
   await page.getByRole("button", { name: /^Run$/ }).click();
-  // Settle on either a result table or the error box; never just a timeout.
+  // Settle on a FRESH result, the error box, or the empty state — never a
+  // timeout, and never the previous answer.
   await expect
     .poll(async () => {
-      if (await page.locator("table thead th").first().isVisible().catch(() => false)) return "rows";
       if (await page.locator("pre").first().isVisible().catch(() => false)) return "error";
       if (await page.getByText(/empty result, not a failure/i).isVisible().catch(() => false)) return "empty";
+      const now = await meter.textContent().catch(() => null);
+      if (now && now !== before) return "rows";
       return "pending";
     }, { timeout: 45_000 })
     .not.toBe("pending");
@@ -152,7 +175,7 @@ test.describe("23 — Studio SQL console", () => {
 
   test("Ctrl+Enter runs; plain Enter inserts a newline instead", async ({ baseURL }) => {
     await openQueryTab(page, baseURL!);
-    const ta = page.locator("textarea");
+    const ta = editor(page);
     await ta.fill("SELECT 1 AS a");
     await ta.press("Enter");                       // must NOT submit
     await ta.type("-- still editing");
@@ -175,14 +198,23 @@ test.describe("23 — Studio SQL console", () => {
     // generic text, and the user is told the query failed rather than shown an
     // empty table.
     expect(text.trim()).not.toBe("query failed");
-    expect(text).toContain("failed");
 
-    // What we CANNOT assert yet, and why. findata's /retrieve flattens the
-    // Postgres error before this layer ever sees it -- a missing relation comes
-    // back as `{"detail":"bad request: sql execution failed: db error"}`. So the
-    // console faithfully passes through a message that is already useless. The
-    // fix belongs in findata, not here; until then this records the gap instead
-    // of pretending the diagnostic exists.
+    // THE GAP THIS TEST RECORDED HAS CLOSED. It used to assert only
+    // `toContain("failed")`, because findata's /retrieve flattened the Postgres
+    // error to `{"detail":"bad request: sql execution failed: db error"}` — the
+    // console faithfully passed through something already useless, and the test
+    // documented that rather than pretending otherwise.
+    //
+    // findata now returns the real thing:
+    //   findata /retrieve 400: {"detail":"bad request: relation
+    //   \"definitely_not_a_real_table_e2e\" does not exist [42p01]"}
+    //
+    // which no longer contains the word "failed" — so the old assertion started
+    // failing BECAUSE the product improved. Assert what the test's name always
+    // claimed instead: the warehouse's own words reach the user.
+    expect(text, "the console must surface the warehouse's own words").toMatch(
+      /does not exist|not found|no such relation|syntax error|\[\d{2}[a-z0-9]{3}\]/i,
+    );
     const diagnostic = /does not exist|not found|no such|relation|syntax/.test(text);
     test.info().annotations.push({
       type: "error-passthrough",
