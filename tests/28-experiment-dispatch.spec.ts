@@ -90,16 +90,8 @@ test.describe("@experiments control plane — UI structure", () => {
 		await expect(page.getByText(/✓ .*criteria met/i)).toHaveCount(0);
 	});
 
-	test("a new lane appears on Workflows with no UI change (KOL/kol_alpha)", async ({ page }) => {
-		// The kol_strategy lane was added 2026-09-05 as spec (dataset + loop +
-		// experiment) only — no UI code. If the surface is truly derived, its
-		// row and its in-place Metric & arms must appear on their own. This is
-		// the regression that would catch the derived-surface promise breaking.
-		await page.goto(`/studio/apps/${QUANT}?surface=workflows`);
-		await expect(page.getByText(/kol.?strategy/i).first()).toBeVisible({ timeout: 30_000 });
-		await openExperiments(page, QUANT, "kol_strategy");
-		await expect(page.getByText(/kol.?alpha/i).first()).toBeVisible({ timeout: 25_000 });
-	});
+	// The KOL lane's derived-surface, declaration and honesty assertions live
+	// in their own file, 32-kol-lane.spec.ts.
 });
 
 test.describe("@experiments results are per-user", () => {

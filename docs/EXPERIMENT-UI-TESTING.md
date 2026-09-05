@@ -48,7 +48,9 @@ current.
 
 ## 2. Declared arms render — including one that has never run
 
-Open `/studio/a/mbb-consultant/experiments` and expand **judge_panel_parity**.
+Open `/studio/apps/mbb-consultant?surface=workflows&selected=interview` and find
+the **METRIC & ARMS** section (there is no `/experiments` route — §1). Expand
+**judge_panel_parity**.
 
 Expect a **Declared arms** block listing both `panel_single` and
 `panel_median3`, each with a run count or *"never run"*.
@@ -63,10 +65,13 @@ Expect a **Declared arms** block listing both `panel_single` and
 
 On the same panel, each runnable arm shows **"Run this arm"** (never run) or
 **"Run 1 more"**. Click it: it becomes **queued ✓**, and a run appears in the
-app's Workflows within a couple of minutes.
+app's Workflows within a couple of minutes. (It may queue *behind another
+tenant's live study* — the drain is single-app-concurrent, so a "queued ✓" that
+hasn't produced a row yet is back-pressure, not a stall.)
 
-Now open `/studio/a/quant-research/experiments`. Both arms must read
-**"measured passively"** with **no button**.
+Now open `…/quant-research?surface=workflows&selected=backtest` and expand
+**backtest_evidence**. Its `current` arm must read **"measured passively"** with
+**no button**.
 
 That is deliberate. quant-research's `current` arm declares no configuration —
 it is a *label for present behaviour*, not a runnable config. Dispatching it
@@ -138,15 +143,17 @@ from a real result.
 
 ## 5. Honesty checks — the ones most worth a human eye
 
-**`/studio/a/quant-research/backtests`** — the prose must describe a backtest as
-a **dry run**. Any *"registers the strategy"* or *"it is not a dry run"* is a
-live falsehood: the worker builds `--features pg,replay`, so the local-replay
-dispatch posts no mailbox message. That text was wrong for 102 tenants until
-2026-09-04, and survived one round of fixing because it lived in four places
-(loop description, nav label, `ui/backtests.yaml`, README + docstring).
+**The `backtest` loop description** (its Workflows row / `/me/workflows`) must
+describe a backtest as a **dry run**. Any *"registers the strategy"* or *"it is
+not a dry run"* is a live falsehood: the worker builds `--features pg,replay`,
+so the local-replay dispatch posts no mailbox message. That text was wrong for
+102 tenants until 2026-09-04; the dedicated backtests SURFACE was retired in
+the two-tab redesign, so the claim now lives only in the loop description
+(scripted at the contract in `30`).
 
-**`/studio/a/mbb-consultant/experiments`** — per-arm means must appear with
-**no winner** and **no ✓ criteria-met badge** while either of these holds:
+**mbb-consultant `…?surface=workflows&selected=interview`** → `judge_panel_parity`
+— per-arm means must appear with **no winner** and **no ✓ criteria-met badge**
+while either of these holds:
 
 - below `min_samples` (20), or
 - `not comparable — N distinct instruments`.
@@ -196,7 +203,8 @@ cd /proj/lumid_e2e
 # 37 assertions, ~30s, no model spend — safe anywhere
 npx playwright test tests/28-experiment-dispatch.spec.ts \
                     tests/30-experiment-hardening.spec.ts \
-                    tests/31-experiment-stress.spec.ts --project=chromium
+                    tests/31-experiment-stress.spec.ts \
+                    tests/32-kol-lane.spec.ts --project=chromium
 
 # dispatches REAL runs and spends model budget — run deliberately
 npx playwright test tests/29-chatbox-control-plane.spec.ts --project=chromium
@@ -208,6 +216,7 @@ npx playwright test tests/29-chatbox-control-plane.spec.ts --project=chromium
 | `29-chatbox-control-plane` | chat read, dispatch, refusal-by-name, provider routing |
 | `30-experiment-hardening` | enqueue contract, access control, honesty invariants, surfaces |
 | `31-experiment-stress` | concurrency, idempotency, traversal, malformed payloads |
+| `32-kol-lane` | the KOL lane: three-legged declaration, derived render, and that musk_v1 has measured on REAL tape at least once |
 
 **Do not put `29` in CI as-is.** It mutates production state and spends model
 budget; it wants a tag and probably a dedicated tenant.
@@ -222,8 +231,9 @@ Green specs are not a green runbook. The map, honestly:
 | §2 arms render (declared + never-run) | ✅ browser + API | 28 "a loop with metric+dataset shows Metric & arms", "declared arms exposed" |
 | §3 passive arm / no dead button | ✅ browser | 28 "a passive arm explains itself" (asserts absence of the button) |
 | §3 **actual click → run → ledger row** | ⚠️ **manual only** | 28 stops at the button's presence/absence; the live click mutates + drains async + spends budget. The dispatch *contract* is scripted in 30/31 at the API |
-| §3b KOL lane appears + Metric&arms | ✅ browser | 28 "a new lane appears on Workflows with no UI change" |
-| §3b KOL real_tape honesty split | ⚠️ **manual only** | needs a resolved backtest claim (worker + LLM); asserted by hand this session (`real_tape 1.0`, pg_tape, 12,378 prints) |
+| §3b KOL lane appears + Metric&arms | ✅ browser | 32 "renders as a derived surface" |
+| §3b KOL musk_v1 measured on real tape | ✅ API | 32 "at least one landed on REAL tape" (asserts mean*n >= 1 real-tape hit from the aggregate — no pod access, no fresh spend) |
+| §3b a FRESH live click → new verdict row | ⚠️ **manual only** | mutates + drains async behind the shared queue + spends budget; verified by hand this session (`real_tape 1.0`, pg_tape, 12,378 prints) |
 | §4 chatbox dispatch | ⚠️ **spec 29, NOT in the default run** | mutates prod + spends budget; run deliberately |
 | §5 honesty invariants | ✅ API | 30 "synthetic never in a real column", 28 "no unearned verdict", "verdict withheld below min_samples" |
 | §6 rollup **API** | ✅ | 28 "admin insights carries a cross-tenant arm rollup" |
