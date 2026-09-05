@@ -127,3 +127,46 @@ export async function loginViaApi(
 		throw new Error(`login ${r.status()}: ${await r.text()}`);
 	}
 }
+
+/**
+ * Delete a user created by `createUser`. Call from `afterAll`.
+ *
+ * Specs that mint a throwaway account and never remove it leave one behind on
+ * EVERY run: 26 `lumid-e2e-*` accounts were live when this was written, 20 of
+ * them from three specs in a single session, months after a 209-account purge.
+ * They are not inert -- each carries PATs and app installs, and they pad every
+ * admin listing and per-user sweep.
+ *
+ * Best-effort and never throws: a spec that PASSED must not be reported as
+ * failed because its cleanup could not reach the API.
+ */
+export async function deleteUser(baseURL: string, email: string): Promise<boolean> {
+	const adminEmail = process.env.E2E_ADMIN_EMAIL || "admin@lum.id";
+	const adminPassword = process.env.E2E_ADMIN_PASSWORD;
+	if (!adminPassword) return false;
+	try {
+		const login = await fetch(`${baseURL}/api/v1/login`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+		});
+		if (!login.ok) return false;
+		const jwt = (await login.json())?.data?.token;
+		if (!jwt) return false;
+
+		const found = await fetch(
+			`${baseURL}/api/v1/admin/users?q=${encodeURIComponent(email)}&page_size=1`,
+			{ headers: { Authorization: `Bearer ${jwt}` } },
+		);
+		const id = (await found.json())?.data?.users?.[0]?.id;
+		if (!id) return false;
+
+		const del = await fetch(`${baseURL}/api/v1/admin/users/${id}`, {
+			method: "DELETE",
+			headers: { Authorization: `Bearer ${jwt}` },
+		});
+		return del.ok;
+	} catch {
+		return false;
+	}
+}

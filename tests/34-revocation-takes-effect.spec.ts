@@ -1,5 +1,5 @@
 import { test, expect, request as pwRequest } from "@playwright/test";
-import { createUser } from "../fixtures/test-user";
+import { createUser, deleteUser } from "../fixtures/test-user";
 import { localOtpEnabled } from "../fixtures/otp-redis";
 
 // Journey 34 — revocation must take effect NOW, not at token expiry.
@@ -17,6 +17,11 @@ test.describe("34 — logout kills the session immediately", () => {
 		if (!localOtpEnabled() && !process.env.E2E_GMAIL_APP_PASSWORD) testInfo.skip(true, "no OTP source");
 		if (!process.env.E2E_INVITATION_CODE) testInfo.skip(true, "no invitation code");
 		user = await createUser(baseURL!, { tag: `rev-${Date.now().toString(36)}` });
+	});
+
+	// Remove the throwaway account. Without this every run leaves one behind.
+	test.afterAll(async ({ baseURL }) => {
+		if (user?.email && baseURL) await deleteUser(baseURL, user.email);
 	});
 
 	test("a captured cookie stops working the moment the user logs out", async ({ page, context, baseURL }) => {

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { createUser } from "../fixtures/test-user";
+import { createUser, deleteUser } from "../fixtures/test-user";
 import { localOtpEnabled } from "../fixtures/otp-redis";
 
 // Journey 32 — /dataapp-proxy/lqt/ must carry the CALLER's identity.
@@ -21,6 +21,11 @@ test.describe("32 — dataapp-proxy forwards caller identity", () => {
 		}
 		if (!process.env.E2E_INVITATION_CODE) testInfo.skip(true, "E2E_INVITATION_CODE not set");
 		user = await createUser(baseURL!, { tag: `dap-${Date.now().toString(36)}` });
+	});
+
+	// Remove the throwaway account. Without this every run leaves one behind.
+	test.afterAll(async ({ baseURL }) => {
+		if (user?.email && baseURL) await deleteUser(baseURL, user.email);
 	});
 
 	test("a signed-in user sees their OWN scoped rows, not the proxy's", async ({ page, baseURL }) => {
