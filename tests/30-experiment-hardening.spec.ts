@@ -193,22 +193,27 @@ test.describe("@wide surfaces render across apps", () => {
 });
 
 test.describe("@wide the fleet actually received the declarations", () => {
-	test("the published spec carries both experiments (no tab — they render in place)", async () => {
+	test("the published spec carries the declared experiments (no tab — they render in place)", async () => {
 		// Two-tab redesign 2026-09-04: experiments have no tab of their own;
-		// they render on the loop that feeds them (Metric & arms). This test
-		// asserts the DECLARATIONS only.
+		// they render on the loop that feeds them (Metric & arms). Assert the
+		// INVARIANT (the original two are present), not the census — pinning
+		// an exact list made this test fail the day the kol_alpha lane was
+		// deliberately added (2026-09-05), which is a stale-assertion failure
+		// mode this file has already caused one peer-session revert over.
 		const r = await owner.get(`/api/v1/me/apps/${QUANT}/experiments`);
-		const ids = ((await r.json()).data?.experiments ?? []).map((e: any) => e.id).sort();
-		expect(ids).toEqual(["backtest_evidence", "backtest_performance"]);
+		const ids = ((await r.json()).data?.experiments ?? []).map((e: any) => e.id);
+		expect(ids).toEqual(expect.arrayContaining(["backtest_evidence", "backtest_performance"]));
 	});
 
-	test("both quant-research experiments are attached to a loop", async () => {
+	test("every quant-research experiment is attached to a loop", async () => {
 		// An unattached experiment is never evaluated: it accumulates rows and
-		// reports n=0 forever, looking idle rather than broken.
+		// reports n=0 forever, looking idle rather than broken. App-agnostic
+		// over WHICH loop — kol_alpha attaches to kol_strategy, not backtest.
 		const exps = ((await (await owner.get(`/api/v1/me/apps/${QUANT}/experiments`)).json())
 			.data?.experiments ?? []);
+		expect(exps.length).toBeGreaterThanOrEqual(2);
 		for (const e of exps) {
-			expect(e.loops ?? [], `${e.id} is attached to no loop`).toContain("backtest");
+			expect((e.loops ?? []).length, `${e.id} is attached to no loop`).toBeGreaterThan(0);
 		}
 	});
 });
