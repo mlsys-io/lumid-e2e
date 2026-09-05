@@ -74,7 +74,35 @@ fires the loop with no strategy and returns `strategy is empty`. A button that
 can only fail is worse than no button; those experiments are fed by the
 backtests users already run.
 
-> 🚩 **Red flag:** a Run button on quant-research's arms.
+> 🚩 **Red flag:** a Run button on quant-research's `current`/passive arms.
+
+---
+
+## 3b. The KOL lane — a workflow added as spec, no UI code (2026-09-05)
+
+The clearest test of "the surface is derived, not hand-built": `kol_strategy`
+was added to quant-research as a dataset + loop + experiment declaration only.
+Its row and its Metric & arms appear with zero UI change.
+
+1. `…/quant-research?surface=workflows` → the header count includes a
+   **`Kol strategy`** row (alongside Backtest / Forward test / Analyze), plus a
+   **"related workflows"** section listing venue-link-matcher (a cross-app
+   `config.include`).
+2. `…?surface=workflows&selected=kol_strategy` → **METRIC & ARMS** with a
+   **`kol alpha`** card, subtitle *"measures real tape … over musk_tweets_v1 ·
+   fed by kol_strategy"*.
+3. Expand it: **`current`** = *measured passively* (no button); **`musk_v1`** =
+   **Run this arm** — self-sufficient: it reads the frozen tweet slice, scores a
+   lean, generates a `.lqts`, submits a backtest. A resolved arm reads
+   `musk_v1 · N runs · real_tape <x>`.
+4. The honesty split holds here too: a `musk_v1` row that replayed recorded
+   prints shows `real_tape 1.0`; one that fell back shows `0.0`. A tweet is
+   never a signal — it only picks the parameterization; the backtest worker
+   judges it.
+
+> 🚩 **Red flag:** the KOL row missing while `/me/workflows` lists it (the
+> surface stopped deriving), or a `real_tape=1` row whose `replay` is not
+> `pg_tape` (the metric measuring the wrong axis).
 
 ---
 
@@ -133,10 +161,13 @@ Withholding the verdict there is the system being right.
 
 ## 6. Analytics
 
-`/studio/dashboard/admin/apps/mbb-consultant/insights` — **admin only**; a
-non-admin is bounced by the route guard and the API returns 403.
+`/studio/admin/apps/<app>/insights` — **admin only**; a non-admin is bounced by
+the route guard and the API returns 403. Reach it from the app page's **⋯ menu
+→ Insights** (moved there from the top strip 2026-09-05 — a per-app admin
+drill-down, not a primary action; typing the URL still works).
 
-Look for the experiments rollup: **runs *and* failures** per arm. Failures are
+Look for the **"Experiment arms across the fleet"** panel: **runs *and*
+failures** per arm, footnoted *"run counts across all tenants"*. Failures are
 reported on purpose — an arm rollup that only showed successes would be the
 kind of number this whole system exists to avoid.
 
@@ -173,13 +204,37 @@ npx playwright test tests/29-chatbox-control-plane.spec.ts --project=chromium
 
 | Spec | Covers |
 |---|---|
-| `28-experiment-dispatch` | UI structure, per-user isolation, viewing + analysis |
+| `28-experiment-dispatch` | UI structure (no-tab, Metric&arms in place, KOL lane, ⋯-menu Insights), per-user isolation, rendered admin rollup |
 | `29-chatbox-control-plane` | chat read, dispatch, refusal-by-name, provider routing |
 | `30-experiment-hardening` | enqueue contract, access control, honesty invariants, surfaces |
 | `31-experiment-stress` | concurrency, idempotency, traversal, malformed payloads |
 
 **Do not put `29` in CI as-is.** It mutates production state and spends model
 budget; it wants a tag and probably a dedicated tenant.
+
+### How much of THIS runbook is scripted — read before trusting "it's all green"
+
+Green specs are not a green runbook. The map, honestly:
+
+| Runbook § | Scripted? | Where / why not |
+|---|---|---|
+| §1 two tabs, no Experiments tab | ✅ browser | 28 "the app panel has NO Experiments tab" |
+| §2 arms render (declared + never-run) | ✅ browser + API | 28 "a loop with metric+dataset shows Metric & arms", "declared arms exposed" |
+| §3 passive arm / no dead button | ✅ browser | 28 "a passive arm explains itself" (asserts absence of the button) |
+| §3 **actual click → run → ledger row** | ⚠️ **manual only** | 28 stops at the button's presence/absence; the live click mutates + drains async + spends budget. The dispatch *contract* is scripted in 30/31 at the API |
+| §3b KOL lane appears + Metric&arms | ✅ browser | 28 "a new lane appears on Workflows with no UI change" |
+| §3b KOL real_tape honesty split | ⚠️ **manual only** | needs a resolved backtest claim (worker + LLM); asserted by hand this session (`real_tape 1.0`, pg_tape, 12,378 prints) |
+| §4 chatbox dispatch | ⚠️ **spec 29, NOT in the default run** | mutates prod + spends budget; run deliberately |
+| §5 honesty invariants | ✅ API | 30 "synthetic never in a real column", 28 "no unearned verdict", "verdict withheld below min_samples" |
+| §6 rollup **API** | ✅ | 28 "admin insights carries a cross-tenant arm rollup" |
+| §6 rollup **rendered panel** | ✅ browser | 28 "the arm rollup actually RENDERS" (added 2026-09-05 — the API-only test stayed green through a 14-version gap where nothing rendered it) |
+| §6 ⋯-menu Insights reachable | ✅ browser | 28 "Insights is reachable from the app's ⋯ menu" |
+
+So: **structure, isolation, honesty guards, the API contracts, and the rendered
+surfaces are e2e-scripted in the default `28+30+31` run.** What is *not*, and
+needs a human (or the tagged `29`): a live click-to-verdict, the KOL real-tape
+resolution, and the chat control plane — each because it mutates production and
+spends model budget, which is the wrong thing to put on every CI run.
 
 ---
 
@@ -189,13 +244,18 @@ budget; it wants a tag and probably a dedicated tenant.
   *"2 distinct instruments across 2 arms on analyst"*. Testing ran the arms
   under two different analysts. A clean comparison needs both arms re-run with
   the analyst pinned, behind a fresh `dataset_version`.
-- **quant-research** `backtest_evidence` / `backtest_performance`: `n=0`. These
-  are passive — rows arrive when users poll real backtests. Empty is honest.
+- **quant-research** `backtest_evidence`: now accumulating (`real_tape` reads a
+  real fraction after the dataset reached the prints∩signals intersection,
+  `tape_covered_v1` 1.3.0); `backtest_performance`: still `n=0` — waiting on a
+  strategy real on all three axes over that intersection. `kol_alpha`:
+  `musk_v1` mean ~0.5 over 2 resolved rows (one all-axes-real).
 
-Deployed, re-verified **2026-09-04 (second pass)**: scheduler `ad456d52`
-(unchanged) · identity **`v0.5.323`** · ui **`v0.5.316`** ·
-quant-research `v0.7.33` (**121** installs, up from 102 — 19 tenants restored
-after a scheduler migration dropped them) · mbb-consultant `v0.9.11` (2/2).
+Deployed, re-verified **2026-09-05**: scheduler `v0.4.46` (fine-grained
+versioning + gates) · identity **`v0.5.337`** · ui **`v0.5.330`** ·
+quant-research `v0.7.4x` (kol_strategy lane live) · mbb-consultant `v0.9.20`
+· venue-link-matcher `v0.3.x` (arms wired). Exact tags drift — read
+`kubectl -n lumid get deploy/rollout` and the app `.xpcloud.yaml`, don't trust
+this line.
 
 ---
 

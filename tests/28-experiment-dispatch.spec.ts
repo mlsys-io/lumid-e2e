@@ -89,6 +89,17 @@ test.describe("@experiments control plane — UI structure", () => {
 		await openExperiments(page, QUANT, "backtest");
 		await expect(page.getByText(/✓ .*criteria met/i)).toHaveCount(0);
 	});
+
+	test("a new lane appears on Workflows with no UI change (KOL/kol_alpha)", async ({ page }) => {
+		// The kol_strategy lane was added 2026-09-05 as spec (dataset + loop +
+		// experiment) only — no UI code. If the surface is truly derived, its
+		// row and its in-place Metric & arms must appear on their own. This is
+		// the regression that would catch the derived-surface promise breaking.
+		await page.goto(`/studio/apps/${QUANT}?surface=workflows`);
+		await expect(page.getByText(/kol.?strategy/i).first()).toBeVisible({ timeout: 30_000 });
+		await openExperiments(page, QUANT, "kol_strategy");
+		await expect(page.getByText(/kol.?alpha/i).first()).toBeVisible({ timeout: 25_000 });
+	});
 });
 
 test.describe("@experiments results are per-user", () => {
@@ -149,7 +160,7 @@ test.describe("@experiments viewing + analysis (as the data owner)", () => {
 	});
 
 	test("admin insights carries a cross-tenant arm rollup that counts, not judges", async () => {
-		const r = await owner.get(`/api/v1/admin/apps/${CONSULTANT}/insights?days=1`);
+		const r = await owner.get(`/api/v1/admin/apps/${QUANT}/insights?days=2`);
 		expect(r.ok()).toBeTruthy();
 		const e = (await r.json()).data?.experiments;
 		expect(Array.isArray(e?.by_arm)).toBeTruthy();
@@ -158,5 +169,28 @@ test.describe("@experiments viewing + analysis (as the data owner)", () => {
 		expect(arm).toHaveProperty("runs");
 		expect(arm).toHaveProperty("failed"); // failures are reported, not hidden
 		expect(String(e.note ?? "")).toMatch(/run counts/i);
+	});
+
+	test("the arm rollup actually RENDERS on the admin insights page", async ({ page }) => {
+		// The API shipped the rollup since v0.5.315 and NOTHING rendered it
+		// until v0.5.329 — an API-only test would have stayed green through
+		// that whole gap. Assert the panel in the browser, and that it reads
+		// as counts, never a verdict.
+		await loginAsAdmin(page);
+		await page.goto(`/studio/admin/apps/${QUANT}/insights`);
+		await expect(page.getByText(/Experiment arms across the fleet/i))
+			.toBeVisible({ timeout: 30_000 });
+		await expect(page.getByText(/run counts across all tenants/i)).toBeVisible();
+	});
+
+	test("Insights is reachable from the app's ⋯ menu, not a bounce-only route", async ({ page }) => {
+		// Moved into the ⋯ dropdown 2026-09-05. The failure this guards: the
+		// route exists but nothing links to it (its original sin), so it is
+		// reachable only by typing the URL.
+		await loginAsAdmin(page);
+		await page.goto(`/studio/apps/${QUANT}`);
+		await page.getByRole("button", { name: /agent actions/i }).first().click();
+		await expect(page.getByRole("menuitem", { name: /insights/i }))
+			.toBeVisible({ timeout: 15_000 });
 	});
 });
