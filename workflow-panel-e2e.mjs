@@ -100,6 +100,48 @@ const panelText = async (page) => {
   return (await el.innerText().catch(() => "")) || "";
 };
 
+// ─── the fixtures are live rows, so CHECK them before blaming the product ──
+//
+// These two ids are addresses into a run row that any process can rewrite, and
+// one did: the `_selftest-compute` row was repointed at two real office jobs to
+// shoot a docs screenshot, which gave req-FQ89 siblings and orphaned the
+// synthetic pair. The suite then reported six product failures — "no arm
+// switcher on a run of one", "arm labels missing" — for a product that was
+// working perfectly. Every one of those was a true statement about a fixture.
+//
+// So the preconditions are asserted first, and a fixture drift exits 3 with
+// what changed, rather than spending the run producing confident nonsense.
+const sib = async (site, id) => {
+  const r = await fetch(
+    `https://lum.id/api/v1/me/compute/jobs/${site}/${id}/siblings`,
+    { headers: { authorization: `Bearer ${PAT}` } });
+  if (!r.ok) return null;
+  return (await r.json().catch(() => null))?.data?.jobs ?? null;
+};
+{
+  const one = await sib("office", "req-FQ89FpUz6jnoyYyyjoPxxX");
+  const many = await sib("office", "req-SELFTESTaaaa01");
+  const bad = [];
+  // A claimed job must be a run of ONE, or the "no switcher" check is testing
+  // the opposite of what it says.
+  if (one && one.length > 1) {
+    bad.push(`req-FQ89 now has ${one.length} siblings (${one.map((j) => j.arm).join(", ")})`
+      + " — it is no longer a run of one");
+  }
+  // The fan-out pair must still be the two-arm, two-site reported run.
+  if (!many || many.length < 2) {
+    bad.push("req-SELFTESTaaaa01 no longer resolves to a two-arm run"
+      + ` (siblings=${many ? many.length : "404"})`);
+  }
+  if (bad.length) {
+    console.log("FIXTURE DRIFT — not a product failure. The rows these checks"
+      + " address have changed:\n" + bad.map((b) => `  - ${b}`).join("\n")
+      + "\n\nRe-point the fixtures (or re-create the _selftest-compute run row)"
+      + " and re-run. Nothing below was executed.");
+    process.exit(3);
+  }
+}
+
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
 await ctx.route("**/*", (r) =>
