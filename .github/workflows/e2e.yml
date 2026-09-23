@@ -172,3 +172,40 @@ jobs:
           name: playwright-auto-quant-report-${{ github.run_id }}
           path: playwright-report/
           retention-days: 7
+
+  fresh-user-journey:
+    # Row 10: the fresh-user journey, walked unaided through the UI as a
+    # brand-new non-admin. Creates a real account (zero apps), mints a PAT,
+    # installs Quant Research, submits a strategy, backtests, and reads the
+    # three-axis honesty table. Nightly only (slow, mints PATs against prod,
+    # and the backtest→verdict half depends on the worker draining). No docker
+    # needed — this is a pure UI walk, unlike fresh-user-auto-quant.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASE_URL: https://lum.id
+      CI_E2E_LONG: "1"
+      E2E_GMAIL_USER: ${{ secrets.E2E_GMAIL_USER }}
+      E2E_GMAIL_APP_PASSWORD: ${{ secrets.E2E_GMAIL_APP_PASSWORD }}
+      E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      E2E_INVITATION_CODE: ${{ secrets.E2E_INVITATION_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run fresh-user journey spec
+        run: npx playwright test tests/fresh-user-journey.spec.ts --project=chromium
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-fresh-user-journey-report-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 7
