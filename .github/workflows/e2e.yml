@@ -108,6 +108,33 @@ jobs:
       - run: pip install requests
       - run: python3 LumidOS/tests/integration/test_case_14_install_lifecycle.py
 
+  doc-harnesses:
+    # Row 9: the doc harnesses must pass in CI. Each is a standalone .mjs that
+    # walks the live docs as the non-admin reader and asserts every named UI
+    # element exists (docs-fresh-user: pages render; docs-ui-claims: the doc's
+    # claims are true). Exit 2 on any failed check. Runs on every push/PR so a
+    # doc claim that rots fails the build.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASE_URL: https://lum.id
+      PAT_FILE: /tmp/doc-e2e.pat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Write non-admin PAT
+        run: printf '%s' "${{ secrets.DOC_E2E_PAT }}" > "$PAT_FILE"
+      - name: Run docs-fresh-user harness
+        run: node docs-fresh-user-e2e.mjs
+      - name: Run docs-ui-claims harness
+        run: node docs-ui-claims-e2e.mjs
+
   fresh-user-auto-quant:
     # Long auto-quant e2e — 5 parallel fresh users, each installs the
     # CLI in a docker container and runs a paper cycle. Nightly only
