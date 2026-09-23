@@ -156,10 +156,20 @@ for (const { slug } of VISIBLE) {
     `len=${txt.length} ${JSON.stringify(txt.slice(0, 90))}`);
 
   // An <img> that 404s still occupies the DOM; naturalWidth is the only way to
-  // tell "rendered" from "broken icon".
-  const imgs = await page.evaluate(() =>
-    Array.from(document.querySelectorAll("main img")).map((i) => ({
-      src: i.getAttribute("src") || "", ok: i.complete && i.naturalWidth > 0 })));
+  // tell "rendered" from "broken icon". Images load asynchronously and a cold
+  // CI runner is slower than a warm local box, so poll for completion rather
+  // than trusting a fixed wait — a 404'd image never becomes complete, so this
+  // still catches real broken images while not flaking on slow-but-fine ones.
+  const imgs = await page.evaluate(async () => {
+    const els = Array.from(document.querySelectorAll("main img"));
+    const deadline = Date.now() + 15000;
+    const ready = () => els.every((i) => i.complete);
+    while (!ready() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return els.map((i) => ({
+      src: i.getAttribute("src") || "", ok: i.complete && i.naturalWidth > 0 }));
+  });
   const broken = imgs.filter((i) => !i.ok);
   if (imgs.length) {
     check(`doc ${slug}: all ${imgs.length} images render`, broken.length === 0,
