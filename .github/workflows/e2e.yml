@@ -23,6 +23,10 @@ jobs:
       E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
       E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
       E2E_INVITATION_CODE: ${{ secrets.E2E_INVITATION_CODE }}
+      # Dedicated CI admin PAT (lumid:read+write, expiring). The admin fixture
+      # uses it when no password is set, and specs 28-32 read it from
+      # ~/.lumid/admin.pat (written below). Unset -> those specs skip.
+      E2E_ADMIN_PAT: ${{ secrets.E2E_ADMIN_PAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,6 +34,11 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
+      - name: Write admin PAT
+        if: env.E2E_ADMIN_PAT != ''
+        run: |
+          mkdir -p ~/.lumid && umask 077
+          printf '%s' "$E2E_ADMIN_PAT" > ~/.lumid/admin.pat
       - name: Install Playwright browsers
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
@@ -42,7 +51,11 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             npx playwright test
           else
-            npx playwright test --project=chromium
+            # PR/push runs skip @stress: it loads production, and it ran in
+            # parallel with the doc harnesses, which then timed out on slow
+            # pages (2026-09-27: 51/53 and 22/24 in runs where it executed,
+            # 53/53 and 24/24 where it did not). Nightly still runs it.
+            npx playwright test --project=chromium --grep-invert @stress
           fi
       - name: Upload report
         if: ${{ !cancelled() }}
@@ -97,16 +110,29 @@ jobs:
       LUMID_IDENTITY_URL: https://lum.id
       LUMID_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
       LUMID_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      # Quarantine switch: this job needs a LumidOS checkout token and the admin
+      # login, and CI has had neither since 2026-06-24, so it failed on every
+      # run. Without them it now says so and skips instead of going red.
+      # The LumidOS checkout uses a read-only deploy key (LUMIDOS_DEPLOY_KEY,
+      # added 2026-09-27). TC14 logs in with the admin PASSWORD to mint a PAT
+      # (a PAT cannot mint one), so it stays quarantined until that is set.
+      HAS_SECRETS: ${{ secrets.LUMIDOS_DEPLOY_KEY != '' && secrets.E2E_ADMIN_PASSWORD != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - if: env.HAS_SECRETS != 'true'
+        run: echo "::notice title=cli-lifecycle quarantined::E2E_ADMIN_PASSWORD (and/or LUMIDOS_DEPLOY_KEY) is not configured; TC14 skipped."
+      - if: env.HAS_SECRETS == 'true'
+        uses: actions/checkout@v4
         with:
           repository: mlsys-io/LumidOS
           path: LumidOS
-          token: ${{ secrets.LUMIDOS_CHECKOUT_TOKEN }}
-      - uses: actions/setup-python@v5
+          ssh-key: ${{ secrets.LUMIDOS_DEPLOY_KEY }}
+      - if: env.HAS_SECRETS == 'true'
+        uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install requests
-      - run: python3 LumidOS/tests/integration/test_case_14_install_lifecycle.py
+      - if: env.HAS_SECRETS == 'true'
+        run: pip install requests
+      - if: env.HAS_SECRETS == 'true'
+        run: python3 LumidOS/tests/integration/test_case_14_install_lifecycle.py
 
   doc-harnesses:
     # Row 9: the doc harnesses must pass in CI. Each is a standalone .mjs that
@@ -114,6 +140,11 @@ jobs:
     # element exists (docs-fresh-user: pages render; docs-ui-claims: the doc's
     # claims are true). Exit 2 on any failed check. Runs on every push/PR so a
     # doc claim that rots fails the build.
+    # After playwright, not beside it: both drive production, and the doc
+    # harnesses' fixed page waits flaked when they competed. always() so a
+    # red playwright still gets its docs checked.
+    needs: [playwright]
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
