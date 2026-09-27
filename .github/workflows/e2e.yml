@@ -23,6 +23,10 @@ jobs:
       E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
       E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
       E2E_INVITATION_CODE: ${{ secrets.E2E_INVITATION_CODE }}
+      # Dedicated CI admin PAT (lumid:read+write, expiring). The admin fixture
+      # uses it when no password is set, and specs 28-32 read it from
+      # ~/.lumid/admin.pat (written below). Unset -> those specs skip.
+      E2E_ADMIN_PAT: ${{ secrets.E2E_ADMIN_PAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,6 +34,11 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
+      - name: Write admin PAT
+        if: env.E2E_ADMIN_PAT != ''
+        run: |
+          mkdir -p ~/.lumid && umask 077
+          printf '%s' "$E2E_ADMIN_PAT" > ~/.lumid/admin.pat
       - name: Install Playwright browsers
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
@@ -100,16 +109,19 @@ jobs:
       # Quarantine switch: this job needs a LumidOS checkout token and the admin
       # login, and CI has had neither since 2026-06-24, so it failed on every
       # run. Without them it now says so and skips instead of going red.
-      HAS_SECRETS: ${{ secrets.LUMIDOS_CHECKOUT_TOKEN != '' && secrets.E2E_ADMIN_PASSWORD != '' }}
+      # The LumidOS checkout uses a read-only deploy key (LUMIDOS_DEPLOY_KEY,
+      # added 2026-09-27). TC14 logs in with the admin PASSWORD to mint a PAT
+      # (a PAT cannot mint one), so it stays quarantined until that is set.
+      HAS_SECRETS: ${{ secrets.LUMIDOS_DEPLOY_KEY != '' && secrets.E2E_ADMIN_PASSWORD != '' }}
     steps:
       - if: env.HAS_SECRETS != 'true'
-        run: echo "::notice title=cli-lifecycle quarantined::LUMIDOS_CHECKOUT_TOKEN and/or E2E_ADMIN_PASSWORD are not configured; TC14 skipped."
+        run: echo "::notice title=cli-lifecycle quarantined::E2E_ADMIN_PASSWORD (and/or LUMIDOS_DEPLOY_KEY) is not configured; TC14 skipped."
       - if: env.HAS_SECRETS == 'true'
         uses: actions/checkout@v4
         with:
           repository: mlsys-io/LumidOS
           path: LumidOS
-          token: ${{ secrets.LUMIDOS_CHECKOUT_TOKEN }}
+          ssh-key: ${{ secrets.LUMIDOS_DEPLOY_KEY }}
       - if: env.HAS_SECRETS == 'true'
         uses: actions/setup-python@v5
         with: { python-version: "3.12" }
