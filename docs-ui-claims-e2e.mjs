@@ -210,6 +210,35 @@ note('first-run §6 — "Leave the instrument blank … the *Backtest* dialog\'s
   await page.close();
 }
 
+// ─── workflows.md § "Arms that run without you" ───────────────────────
+// A claim about a PUBLISHED SPEC, not a page: doc-readability's score_docs
+// declares rotate_args over its frozen slice and arms_concurrency: 1. The
+// reader cannot read that repo, so this uses the operator token in a plain
+// Node fetch — never in the browser context above, whose headers every page
+// request carries. Without the token the claim is reported as SKIPPED, not
+// passed.
+note('workflows.md § Arms that run without you — "doc-readability\'s score_docs uses both"');
+{
+  const tok = (process.env.E2E_ADMIN_PAT || "").trim();
+  if (!tok) {
+    console.log("  skip  published-spec claim: E2E_ADMIN_PAT not set");
+  } else {
+    let spec = "", status = 0;
+    try {
+      const r = await fetch("https://xp.io/api/v1/repos/a3f48236-ffe9-4fb9-9548-6e044d5cd9c7/doc-readability/blob/main/.xpcloud.yaml",
+        { headers: { authorization: `Bearer ${tok}` } });
+      status = r.status;
+      const j = await r.json().catch(() => ({}));
+      spec = j.content || (j.body || {}).content || (j.data || {}).content || "";
+    } catch (e) { spec = ""; }
+    check("doc-readability spec is readable", status === 200 && spec.length > 0, `HTTP ${status}`);
+    check("score_docs rotates over the frozen slice (rotate_args → doc_pages_v1.json)",
+      /rotate_args:\s*\n\s*source:\s*data\/seed\/doc_pages_v1\.json/.test(spec), "");
+    check("score_docs keeps one arm in flight (arms_concurrency: 1)", /arms_concurrency:\s*1\b/.test(spec), "");
+    check("score_docs is scheduled, not @trigger", /schedule:\s*'17 \*\/6 \* \* \*'/.test(spec), "");
+  }
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${failed.length ? "FAIL" : "PASS"} — ${results.length - failed.length}/${results.length} checks`);
 failed.forEach((f) => console.log(`  - ${f.name}`));

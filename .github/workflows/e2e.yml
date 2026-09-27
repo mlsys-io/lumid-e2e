@@ -150,6 +150,9 @@ jobs:
     env:
       BASE_URL: https://lum.id
       PAT_FILE: /tmp/doc-e2e.pat
+      # Operator token for claims about PUBLISHED specs the reader cannot read;
+      # used by a plain fetch only, never in a browser context.
+      E2E_ADMIN_PAT: ${{ secrets.E2E_ADMIN_PAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
