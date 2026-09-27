@@ -60,15 +60,39 @@ const LEDGER = process.env.E2E_FRESH_LEDGER || "/tmp/fresh-user-journey.md";
 // worker backlog is reported as a backlog rather than hanging the suite.
 const VERDICT_POLL_MS = Number.parseInt(process.env.E2E_FRESH_POLL_MS || "600000", 10);
 
-// The instrument every backtest names. Left blank the consumer defaults the
-// symbol to SYNTH — a generator, not a market — and returns a synthetic run
-// that reads like a result (first-run.md §6). Naming it is the whole point.
+// The instrument every backtest names. This spec submits to the raw research
+// API, where a blank symbol really does default to SYNTH (a generator, not a
+// market). The app's Backtest DIALOG is different: blank there auto-picks from
+// the app's `tape_covered_v1` snapshot of SETTLED, signal-covered instruments,
+// and first-run.md §6 tells a new user to leave it blank (2026-09-27).
 //
-// RESOLVED AT RUN TIME (spec 27's idiom): the replay window is the last 7 days,
-// so ANY ticker pinned in source goes dead within a week. Precedence:
-// E2E_FRESH_SYMBOL > the live-instruments endpoint > a stale literal.
+// So this names exactly what that blank auto-pick would: an entry from the
+// published snapshot's `settled` list, rotated per 2-hour slot as the app does.
+// A LIVE instrument (the old choice) can only be marked to market, so every run
+// came back `settlement: mark_to_market` and was flagged as a blocker.
+//
+// Precedence: E2E_FRESH_SYMBOL > the app's settled snapshot > the
+// live-instruments endpoint > a stale literal.
 const SYMBOL_FALLBACK = "KXBTCD-26SEP0211-T77099.99";
 let SYMBOL = process.env.E2E_FRESH_SYMBOL || SYMBOL_FALLBACK;
+const SNAPSHOT_URL =
+	"https://xp.io/api/v1/repos/a3f48236-ffe9-4fb9-9548-6e044d5cd9c7/quant-research/blob/main/sample_data/seed/tape_covered_v1.json";
+
+async function resolveSettledSymbol(api: APIRequestContext): Promise<string> {
+	try {
+		const r = await api.get(SNAPSHOT_URL, { failOnStatusCode: false });
+		if (r.ok()) {
+			const body = await r.json();
+			const snap = JSON.parse(String(body?.content ?? body?.data?.content ?? "{}"));
+			const pool: string[] = snap?.settled ?? [];
+			if (pool.length) return pool[Math.floor(Date.now() / 7_200_000) % pool.length];
+		}
+	} catch {
+		// Falls through to the live-instrument lookup; the run's own
+		// `settlement` label then reports the damage.
+	}
+	return "";
+}
 
 async function resolveLiveSymbol(
 	api: APIRequestContext,
@@ -76,6 +100,8 @@ async function resolveLiveSymbol(
 	pat: string,
 ): Promise<string> {
 	if (process.env.E2E_FRESH_SYMBOL) return process.env.E2E_FRESH_SYMBOL;
+	const settled = await resolveSettledSymbol(api);
+	if (settled) return settled;
 	try {
 		const r = await api.get(
 			`${base}/lqt-data/market/kalshi-active-instruments?since_secs=3600&limit=1`,
@@ -349,11 +375,11 @@ test.describe("10 — fresh-user journey, unaided, non-admin [long]", () => {
 				return hash;
 			});
 
-			// ── §6 — backtest it, naming a live instrument ───────────────────
+			// ── §6 — backtest it, on a settled instrument (what blank auto-picks) ─
 			const api = await playwright.request.newContext();
 			try {
 				SYMBOL = await resolveLiveSymbol(api, baseURL, pat);
-				claimId = await timed("submit backtest (named symbol)", "§6", async () => {
+				claimId = await timed("submit backtest (settled instrument)", "§6", async () => {
 					const r = await api.post(`${baseURL}/api/research/backtests`, {
 						headers: { Authorization: `Bearer ${pat}` },
 						data: { name: `${strategyName}_bt`, strategy: { dsl: STRATEGY_SRC }, symbol: SYMBOL },
@@ -416,7 +442,7 @@ test.describe("10 — fresh-user journey, unaided, non-admin [long]", () => {
 						severity: "blocker",
 						surface: "backtest verdict",
 						note:
-							`A fresh user who named a real instrument got replay=${replay || "(none)"} ` +
+							`A fresh user backtesting a settled instrument (${SYMBOL}) got replay=${replay || "(none)"} ` +
 							`signals=${signals || "(none)"} settlement=${settlement || "(none)"} ` +
 							`(${prints} prints replayed) — not presentable as performance.`,
 					});
