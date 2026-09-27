@@ -57,7 +57,11 @@ test.describe("@kol the lane is declared with all three legs", () => {
 		// it is either a plain workflow or not runnable. The gate blocks a
 		// missing leg at publish — this asserts the declaration survived to the
 		// running install.
-		expect(e.metric?.name).toBe("real_tape");
+		// realized_pnl_ticks since 2026-09-26 (GOALS.md 6.11): real_tape scored
+		// 1.0 on every arm once real tape was routine, so it could never separate
+		// them. real_tape is now the GATE (the metric is written only on an
+		// all-axes-real claim), not the measure.
+		expect(e.metric?.name).toBe("realized_pnl_ticks");
 		expect(e.dataset_id).toBe("musk_tweets_v1");
 		expect(e.loops ?? []).toContain("kol_strategy");
 	});
@@ -75,29 +79,27 @@ test.describe("@kol the lane is declared with all three legs", () => {
 });
 
 test.describe("@kol it has actually measured — honestly", () => {
-	test("musk_v1 has resolved rows and at least one landed on REAL tape", async () => {
+	test("musk_v1 has resolved, all-axes-real rows under the current metric", async () => {
 		const e = await kolExperiment();
+		// A state computed under the OLD metric would make every number below
+		// meaningless; identity flags it (state_stale) instead of serving it.
+		expect(e.state_stale, `state predates the metric (was ${e.state_metric})`).toBeFalsy();
 		const v = (e.variants ?? {}).musk_v1;
-		expect(v, "musk_v1 has no observed rows — nothing has run").toBeTruthy();
+		expect(v, "musk_v1 has no rows carrying realized_pnl_ticks — nothing real has resolved").toBeTruthy();
+		// Every counted row passed the all-axes-real gate (the poll only writes
+		// the metric on such a claim), so n > 0 proves a KOL-conditioned strategy
+		// replayed real prices, real signals and a real settlement end to end.
 		expect(v.n).toBeGreaterThan(0);
-		// real_tape is a 0/1 metric, so mean*n = the count of runs that replayed
-		// recorded prints. >= 1 proves a KOL-conditioned strategy backtested on
-		// real market history, not a synthetic fallback — the milestone, and the
-		// proof the whole generate->compile->claim->poll pipeline works end to
-		// end. mean in [0,1] proves the honesty split is intact (a synthetic run
-		// scores 0, never promoted to a real number).
-		expect(v.mean).toBeGreaterThanOrEqual(0);
-		expect(v.mean).toBeLessThanOrEqual(1);
-		const realHits = Math.round(v.mean * v.n);
-		expect(realHits, "no musk_v1 run ever reached real tape").toBeGreaterThanOrEqual(1);
+		expect(Number.isFinite(v.mean)).toBe(true);
 	});
 
-	test("the metric is honest-by-construction — higher real_tape is better, bounded 0..1", async () => {
+	test("the metric is realized PnL on the settled replay — higher is better, any sign", async () => {
 		const e = await kolExperiment();
 		expect(e.metric?.higher_is_better).toBe(true);
+		// PnL in ticks: a losing arm is negative, a flat one (no order) is 0.
+		// The old 0..1 bound belonged to real_tape and no longer applies.
 		for (const v of Object.values(e.variants ?? {}) as any[]) {
-			expect(v.mean).toBeGreaterThanOrEqual(0);
-			expect(v.mean).toBeLessThanOrEqual(1);
+			expect(Number.isFinite(v.mean)).toBe(true);
 		}
 	});
 });
