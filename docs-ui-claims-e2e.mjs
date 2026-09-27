@@ -182,6 +182,34 @@ note('workflows.md L563 — "Click a node. Three tabs:"');
   await page.close();
 }
 
+// ─── first-run §6: "the Backtest dialog's Instrument field is optional" ──
+note('first-run §6 — "Leave the instrument blank … the *Backtest* dialog\'s **Instrument** field is optional"');
+{
+  const { page, errs } = await open("/studio/apps/quant-research?surface=strategies", 9000);
+  let placeholder = "", required = null, opened = false;
+  try {
+    // Open the dialog from the first row that offers it — and never confirm.
+    await page.locator("main button", { hasText: /^\s*Backtest\s*$/ }).first().click({ timeout: 10000 });
+    // By the label's text, not getByLabel: the dialog's label gained htmlFor
+    // only in lumid-ui #124; this works on both sides of that change.
+    const field = page.locator("label", { hasText: /^\s*Instrument\s*$/ }).first()
+      .locator("xpath=following-sibling::input[1]");
+    await field.waitFor({ timeout: 8000 });
+    opened = true;
+    placeholder = (await field.getAttribute("placeholder")) || "";
+    required = await field.evaluate((el) => el.required === true || el.getAttribute("aria-required") === "true");
+    await page.screenshot({ path: `${OUT}/backtest-dialog.png` }).catch(() => {});
+    await page.getByRole("button", { name: /^Cancel$/ }).first().click({ timeout: 5000 }).catch(() => page.keyboard.press("Escape"));
+  } catch { /* recorded by the checks below */ }
+  check("backtest: the Backtest dialog opens with an Instrument field", opened, "");
+  check("backtest: Instrument is optional (blank is the recommended path)", opened && required === false,
+    `required=${required}`);
+  check('backtest: blank auto-picks a settled instrument, as §6 says', /auto-pick/i.test(placeholder),
+    JSON.stringify(placeholder));
+  check("backtest: no uncaught page errors", errs.length === 0, errs[0] || "");
+  await page.close();
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${failed.length ? "FAIL" : "PASS"} — ${results.length - failed.length}/${results.length} checks`);
 failed.forEach((f) => console.log(`  - ${f.name}`));
