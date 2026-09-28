@@ -48,7 +48,9 @@ const J4_PROMPT =
 const J7_PROMPT = "make a v2 with a lower threshold and compare it with v1 on the same market";
 // A step's own output. NOT "per-stage output": the Outputs panel says "Open a
 // run to see its per-stage output", which is an instruction, not an output.
-const STEP_OUTPUT = /\bstdout\b|\bstderr\b|exit (code|status)\b/i;
+// expanded_args is in a command step's RECORDED output (the args it actually
+// ran with); a declared DAG never carries it.
+const STEP_OUTPUT = /\bstdout\b|\bstderr\b|exit (code|status)\b|"?expanded_args"?/i;
 const JARGON = /lqt_inbox|lqt_outbox|obs plane|tenant/gi;
 
 // ── the record ────────────────────────────────────────────────────────────
@@ -597,7 +599,9 @@ test.describe("persona — undergrad quant-research journey J1–J9 [measurement
 				"Learn (Reading guide)",
 				async (m) => {
 					if (!/\/studio\/apps\//.test(p.url())) await p.goto(`/studio/apps/${APP}`, { waitUntil: "load" });
-					const guide = p.getByRole("link", { name: /Reading guide/i }).first();
+					// The app's intro links the newcomer guide; it was "Reading guide" (->
+					// first-run) until quant-research 0.7.109 made it "Quickstart".
+					const guide = p.getByRole("link", { name: /Reading guide|Quickstart/i }).first();
 					await waitVisible(guide, 30_000);
 					await m.click(guide, { measure: true });
 					// The first <h1> in the layout is empty; the doc title is the first
@@ -710,7 +714,12 @@ test.describe("persona — undergrad quant-research journey J1–J9 [measurement
 					const toast = await waitVisible(p.getByText(/Queued|queued|submitted|claim/i), 8_000);
 					m.details.submit_confirmed_in_ui = toast;
 					stratUrl = `/studio/apps/${APP}?surface=strategy&strategy_id=${v1!.strategy_id}`;
-					// "Poll result" after ~1 minute, then read the strategy's own page.
+					// Since quant-research 0.7.109 the page follows the claim itself and
+					// prints the verdict under the table; a reader who stays watches it
+					// arrive. Give it 4 minutes on the page, then do what a reader who
+					// left would do: open the list again and ask for pending results.
+					const verdict = p.getByText(/Real on all three axes|Not a performance number/i).first();
+					m.details.in_page_verdict = await waitVisible(verdict, 240_000);
 					let polls = 0;
 					let rows: BtRow[] = [];
 					while (Date.now() - tSubmit < BT_POLL_MS) {
@@ -720,7 +729,7 @@ test.describe("persona — undergrad quant-research journey J1–J9 [measurement
 						} else {
 							await p.reload({ waitUntil: "load" });
 						}
-						const pr = p.getByRole("button", { name: "Poll result" }).first();
+						const pr = p.getByRole("button", { name: /^(Poll result|Check pending results)$/ }).first();
 						if (await waitVisible(pr, 30_000)) {
 							await m.click(pr);
 							polls++;
@@ -810,8 +819,18 @@ test.describe("persona — undergrad quant-research journey J1–J9 [measurement
 					const sourceVisible = new RegExp(`strategy\\s+${v1!.name}\\s*\\{`).test(txt) || /\bwhen\s+\w+[^\n]*\{|signal\("/.test(txt);
 					const newVersion = (await p.getByRole("button", { name: /new version|edit|fork|duplicate|revise/i }).count()) > 0 ||
 						(await p.getByRole("link", { name: /new version|edit|fork|revise/i }).count()) > 0;
-					const compare = (await p.getByRole("button", { name: /compare|diff/i }).count()) > 0 ||
+					let compare = (await p.getByRole("button", { name: /compare|diff/i }).count()) > 0 ||
 						(await p.getByRole("link", { name: /compare|diff/i }).count()) > 0;
+					// Compare lives where you pick TWO strategies — the Strategies list
+					// (quant-research 0.7.109: checkboxes + a table-level Compare). Look
+					// there too; the pass criterion is unchanged.
+					if (!compare) {
+						await p.goto(`/studio/apps/${APP}?surface=strategies`, { waitUntil: "load" });
+						await p.waitForTimeout(6_000);
+						compare = (await p.locator("main").getByRole("button", { name: /^compare/i }).count()) > 0;
+						await p.goto(`/studio/apps/${APP}?surface=strategy&strategy_id=${v1!.strategy_id}`, { waitUntil: "load" });
+						await waitVisible(p.getByText("Backtests for this strategy"), 30_000);
+					}
 					m.survives = await survivesReload(p, () => p.getByText("Backtests for this strategy"));
 					m.details = { source_visible: sourceVisible, new_version_in_ui: newVersion, compare_in_ui: compare };
 					const uiOk = sourceVisible && newVersion && compare;
@@ -857,10 +876,26 @@ test.describe("persona — undergrad quant-research journey J1–J9 [measurement
 					await p.goto(`/studio/apps/${APP}?surface=strategies`, { waitUntil: "load" });
 					await p.waitForTimeout(3_000);
 					await m.click(p.getByRole("link", { name: /^Workflows$/ }).first(), { measure: true });
-					const bt = p.getByRole("button", { name: /^Backtest(?! poll)\b/ }).first();
+					// The workflow row is a link since the run pages (lumid-ui v0.5.485),
+					// a button before.
+					const bt = p.getByRole("link", { name: /^Backtest(?! poll)\b/ }).or(p.getByRole("button", { name: /^Backtest(?! poll)\b/ })).first();
 					await waitVisible(bt, 30_000);
 					await m.click(bt, { measure: true });
 					await p.waitForTimeout(5_000);
+					// Run pages: the workflow page opens its latest run with the steps
+					// shown. If the output is already on screen, that is the target.
+					const direct = p.getByText(STEP_OUTPUT).first();
+					if (await waitVisible(direct, 8_000)) {
+						await m.measure(direct);
+						m.survives = await survivesReload(p, () => p.getByText(STEP_OUTPUT));
+						m.details.url_after_open = p.url();
+						const http0 = (m.errors ?? []).length;
+						const ok0 = m.clicks <= 3 && http0 === 0 && (m.px ?? 0) === 0 && m.survives === true;
+						return {
+							ok: ok0,
+							why: ok0 ? "step output reached within budget" : [m.clicks > 3 ? `${m.clicks} clicks` : "", http0 ? `${http0} HTTP error(s)` : "", (m.px ?? 0) > 0 ? `output ${m.px}px below the fold` : "", m.survives === false ? "state lost on reload" : ""].filter(Boolean).join("; "),
+						};
+					}
 					const nodes = p.locator(".react-flow__node").filter({ hasText: /^v\d+/ });
 					await waitVisible(nodes, 30_000);
 					const labels = await nodes.evaluateAll((es) => es.map((e) => (e as HTMLElement).innerText.trim().split(/\s+/)[0]));
