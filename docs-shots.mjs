@@ -78,22 +78,55 @@ for (const [name, row, after] of [["first-run-backtest-result-2", "Backtest", /m
   await shot(name, { url: "/studio/apps/quant-research?surface=workflows",
     proof: { before: new RegExp(row), after }, act: clickText(row), settle: 4000 });
 await shot("first-run-marketplace", { url: "/studio/library/marketplace", proof: /Quant Research/ });
-await shot("first-run-mbb-modes", { url: "/studio/apps/mbb-consultant", proof: /AI interviews you/ });
-await shot("first-run-mbb-interview-me", { url: "/studio/apps/mbb-consultant",
+const pickInterviewCase = async (p) => {
+  await p.locator("main button", { hasText: /^AI interviews you/ }).first().click({ timeout: 8000 });
+  await p.waitForTimeout(800);
+  await p.locator("main button", { hasText: /·\s*(Easy|Medium|Hard)/ }).first().click({ timeout: 8000 });
+  await p.waitForTimeout(1500);
+  return p.locator("main button").filter({ hasText: /^Interview me$/ }).first();
+};
+const openTab = (tab, after) => async (p) => {
+  await p.getByText(tab, { exact: true }).first().click({ timeout: 10000 });
+  return await waitText(p, after);
+};
+
+// ── mbb-consultant.md (AI Consulting Onboarding) ─────────────────────
+// Its own images since the guide was split out of first-run (2026-09-28).
+await shot("mbb-marketplace", { url: "/studio/library/marketplace?q=mbb",
+  proof: { before: /Marketplace/, after: /MBB Consultant/ }, settle: 4000,
+  act: async (p) => { await p.getByText("MBB Consultant", { exact: true }).first().scrollIntoViewIfNeeded({ timeout: 30000 }); } });
+await shot("mbb-modes", { url: "/studio/apps/mbb-consultant", proof: /AI interviews you/ });
+await shot("mbb-interview-me", { url: "/studio/apps/mbb-consultant",
   proof: { before: /AI interviews you/, after: /Interview me/i },
   act: async (p) => {
-    await p.locator("main button", { hasText: /^AI interviews you/ }).first().click({ timeout: 8000 });
-    await p.waitForTimeout(800);
-    await p.locator("main button", { hasText: /·\s*(Easy|Medium|Hard)/ }).first().click({ timeout: 8000 });
-    await p.waitForTimeout(1500);
     // The start control, not the chat's "interview me" chip: bring it into
     // frame, so the image shows mode + case + the button that begins it.
-    const start = p.locator("main button").filter({ hasText: /^Interview me$/ }).first();
+    const start = await pickInterviewCase(p);
     await start.scrollIntoViewIfNeeded({ timeout: 8000 });
     await p.mouse.wheel(0, 200);
     await p.waitForTimeout(800);
     return await start.isVisible();
   } });
+await shot("mbb-review-queue", { url: "/studio/apps/mbb-consultant",
+  proof: { before: /AI interviews you/, after: /Waiting on you/ },
+  act: async (p) => {
+    await p.getByText("Waiting on you", { exact: true }).first().scrollIntoViewIfNeeded({ timeout: 10000 });
+    await p.mouse.wheel(0, -160);
+    await p.waitForTimeout(800);
+  } });
+await shot("mbb-workflows", { url: "/studio/apps/mbb-consultant",
+  proof: { before: /AI interviews you/, after: /Case eval/ }, act: openTab("Workflows", /Case eval/), settle: 3000 });
+// An interview run opened: which case, what it scored, and the Mode (casebook
+// vs open) the guide says to read first. Needs a run the reader owns.
+await shot("mbb-interview-runs", { url: "/studio/apps/mbb-consultant",
+  proof: { before: /AI interviews you/, after: /casebook|open|avg.question.score/i },
+  act: async (p) => {
+    if (!(await openTab("Workflows", /Case eval/)(p))) return false;
+    await p.getByText("Interview", { exact: true }).first().click({ timeout: 10000 });
+    await p.waitForTimeout(6000);
+  }, settle: 3000 });
+await shot("mbb-experiments", { url: "/studio/apps/mbb-consultant",
+  proof: { before: /AI interviews you/, after: /judge panel parity/i }, act: openTab("Experiments", /judge panel parity/i), settle: 3000 });
 
 // ── workflows.md ──────────────────────────────────────────────────────
 await shot("experiments-surface", { url: "/studio/apps/quant-research?surface=experiments", proof: /kol.alpha|backtest.evidence/i });
@@ -219,7 +252,7 @@ for (const [name, surface, proof] of [["lumilake-flowmesh-pipeline", "pipeline",
 // stream going quiet. Writes are never approved: a shot whose turn pauses on
 // the Allow/Always/Deny prompt is taken AT the prompt, and the page is closed
 // unanswered.
-async function chatShot(name, { as = "reader", url, say, tool, pre, fresh = true, settleQuiet = 8 }) {
+async function chatShot(name, { as = "reader", url, say, tool, pre, fresh = true, settleQuiet = 8, awaitReply = false, maxWait = 240, doneWhen = null }) {
   if (only.size && !only.has(name)) return;
   const c = ctx[as];
   if (!c) { results.push({ name, ok: false, why: `no ${as} credential` }); return; }
@@ -230,7 +263,7 @@ async function chatShot(name, { as = "reader", url, say, tool, pre, fresh = true
     await page.goto(`https://lum.id${url}`, { waitUntil: "load", timeout: 90000 });
     await page.waitForTimeout(6000);
     // A fresh thread, so the image shows this prompt and not the last shot's.
-    if (fresh && say) {
+    if (fresh && (say || awaitReply)) {
       const nc = page.getByRole("button", { name: "New conversation" }).last();
       if (await nc.count()) { await nc.click().catch(() => {}); await page.waitForTimeout(1500); }
     }
@@ -239,18 +272,31 @@ async function chatShot(name, { as = "reader", url, say, tool, pre, fresh = true
     await box.waitFor({ state: "visible", timeout: 30000 });
     if (say) { await box.click(); await box.fill(say); await page.keyboard.press("Enter"); }
     let last = -1, stable = 0, sawApproval = false;
-    for (let i = 0; i < 240; i++) {
+    for (let i = 0; i < maxWait; i++) {
       await page.waitForTimeout(1000);
       sawApproval = (await page.getByRole("button", { name: /^Always$/ }).count().catch(() => 0)) > 0;
       if (sawApproval) break;
-      if (!say) { if (i > 4) break; continue; }
+      // A pre-step that starts a turn itself (a button, not a typed prompt)
+      // waits for its reply exactly like a typed one.
+      if (!say && !awaitReply) { if (i > 4) break; continue; }
       // Finished = the rail no longer says Working… AND nothing has changed
       // for settleQuiet seconds. Quiet alone fires between two tool calls.
       const txt = await page.locator("body").innerText().catch(() => "");
+      // doneWhen: a reply that goes quiet for minutes mid-turn (judges scoring)
+      // is not finished until the text AFTER the prompt shows the result. The
+      // rest of the page (a case panel, say) must not satisfy it.
+      if (doneWhen && say) {
+        const tail = txt.slice(Math.max(0, txt.lastIndexOf(say.slice(0, 40))));
+        if (!doneWhen.test(tail.slice(say.length))) { stable = 0; last = -1; continue; }
+      }
       const busy = /Working…|sends when current turn finishes/.test(txt);
       const n = stream.length + txt.length;
       if (!busy && n === last) { if (++stable >= settleQuiet) break; } else { stable = 0; last = n; }
     }
+    // Land the rail on the newest message, so the image is the reply and not
+    // a "Jump to latest" pill over the prompt.
+    const jump = page.getByText(/Jump to latest/).first();
+    if (await jump.count().catch(() => 0)) await jump.click({ timeout: 3000 }).catch(() => {});
     await page.waitForTimeout(1500);
     const body = (await page.locator("body").innerText().catch(() => "")) || "";
     // The caption names a chip, so the chip must be ON SCREEN; the stream
@@ -281,6 +327,43 @@ await chatShot("experiments-chat-results", { as: process.env.EXP_AS || "reader",
   say: "how did the analyst_local_gpu experiment turn out? give me the numbers per arm", tool: /list_experiments|experiment_status/, settleQuiet: 12 });
 await chatShot("experiments-chat-controlplane", { url: "/studio/apps/quant-research?surface=experiments",
   say: "add an arm to kol_alpha called musk_v1_docshot that uses the musk_v1 strategy", tool: "add_experiment_arm", settleQuiet: 12 });
+
+// Interview me opens the chat grounded in the case and the AI poses the first
+// question. Starts a real (unscored) session on the reader's install.
+await chatShot("mbb-chat-start", { url: "/studio/apps/mbb-consultant", awaitReply: true, settleQuiet: 12,
+  pre: async (p) => {
+    if (!(await waitText(p, /AI interviews you/))) return false;
+    const start = await pickInterviewCase(p);
+    await start.click({ timeout: 8000 });
+    await p.waitForTimeout(3000);
+  } });
+
+// One SCORED turn: start the interview, wait for the opening, answer it. The
+// image is the judges' verdict in the chat; it also gives the reader a scored
+// interview run, which mbb-interview-runs needs (run that shot AFTER this one).
+// A real, graded answer on the reader's install; the judges take minutes.
+const waitIdle = async (p, quiet = 10, max = 300) => {
+  let last = "", stable = 0;
+  for (let i = 0; i < max; i++) {
+    await p.waitForTimeout(1000);
+    // Relative timestamps ("live · 42s ago", "1m") tick every second and
+    // would keep the page from ever looking still.
+    const raw = await p.locator("body").innerText().catch(() => "");
+    const t = raw.replace(/\b\d+\s*(s|m|h|d|w)\b( ago)?|\bnow\b/g, "");
+    if (!/Working…/.test(t) && t === last) { if (++stable >= quiet) return true; } else { stable = 0; last = t; }
+  }
+  return false;
+};
+await chatShot("mbb-chat-scored", { url: "/studio/apps/mbb-consultant", settleQuiet: 15, maxWait: 900,
+  doneWhen: /keypoint|covered|Judges?\b|\/\s*\d+\s*(keypoints)?/i,
+  pre: async (p) => {
+    if (!(await waitText(p, /AI interviews you/))) return false;
+    const start = await pickInterviewCase(p);
+    await start.click({ timeout: 8000 });
+    await p.waitForTimeout(3000);
+    return await waitIdle(p);
+  },
+  say: "I'd structure it in four parts. 1) Market attractiveness: size and growth of the e-truck segment by class (last-mile vans vs heavy-duty), adoption drivers such as fleet ESG targets, fuel and maintenance savings, subsidies and emissions rules, and charging infrastructure. 2) Customer needs: what 3PLs, carriers and private fleets like Amazon require on range, payload, total cost of ownership and uptime, and how their buying cycles work. 3) Competition: incumbents' EV programs (Daimler, Volvo, PACCAR), EV-native entrants like Tesla Semi and Rivian, and likely share and margins. 4) Our capabilities and economics: battery sourcing, powertrain know-how, plant retooling cost, dealer and service network, cannibalization of diesel sales, and the investment case (NPV and breakeven). The go / no-go rests on whether we can win a profitable share in the classes where TCO already beats diesel." });
 
 // ── workflows.md §16: importing an n8n export ────────────────────────
 const N8N_DOC = JSON.stringify({
