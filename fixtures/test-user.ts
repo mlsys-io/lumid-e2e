@@ -141,27 +141,19 @@ export async function loginViaApi(
  * failed because its cleanup could not reach the API.
  */
 export async function deleteUser(baseURL: string, email: string): Promise<boolean> {
-	const adminEmail = process.env.E2E_ADMIN_EMAIL || "admin@lum.id";
-	const adminPassword = process.env.E2E_ADMIN_PASSWORD;
-	if (!adminPassword) return false;
 	try {
-		const login = await fetch(`${baseURL}/api/v1/login`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ email: adminEmail, password: adminPassword }),
-		});
-		if (!login.ok) return false;
-		const jwt = (await login.json())?.data?.token;
+		const jwt = await adminBearer(baseURL);
 		if (!jwt) return false;
 
 		const found = await fetch(
 			`${baseURL}/api/v1/admin/users?q=${encodeURIComponent(email)}&page_size=1`,
 			{ headers: { Authorization: `Bearer ${jwt}` } },
 		);
-		const id = (await found.json())?.data?.users?.[0]?.id;
-		if (!id) return false;
+		const hit = (await found.json())?.data?.users?.[0];
+		// The search is a LIKE; never delete a near-miss.
+		if (!hit?.id || String(hit.email).toLowerCase() !== email.toLowerCase()) return false;
 
-		const del = await fetch(`${baseURL}/api/v1/admin/users/${id}`, {
+		const del = await fetch(`${baseURL}/api/v1/admin/users/${hit.id}`, {
 			method: "DELETE",
 			headers: { Authorization: `Bearer ${jwt}` },
 		});
@@ -169,4 +161,24 @@ export async function deleteUser(baseURL: string, email: string): Promise<boolea
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * An admin bearer for cleanup: the admin PAT when CI has one (E2E_ADMIN_PAT —
+ * an admin, not super_admin, account; enough to delete a role=user account),
+ * else a JWT from the admin password. Before the PAT path existed, CI had no
+ * password, so every nightly account was left behind.
+ */
+async function adminBearer(baseURL: string): Promise<string> {
+	if (process.env.E2E_ADMIN_PAT) return process.env.E2E_ADMIN_PAT.trim();
+	const adminEmail = process.env.E2E_ADMIN_EMAIL || "admin@lum.id";
+	const adminPassword = process.env.E2E_ADMIN_PASSWORD;
+	if (!adminPassword) return "";
+	const login = await fetch(`${baseURL}/api/v1/login`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+	});
+	if (!login.ok) return "";
+	return (await login.json())?.data?.token || "";
 }

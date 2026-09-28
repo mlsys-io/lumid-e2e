@@ -177,15 +177,21 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # One at a time: the end-of-job sweep deletes this job's lumid-e2e-aq-*
+    # accounts, which must not be a concurrent run's live ones.
+    concurrency:
+      group: fresh-user-auto-quant
+      cancel-in-progress: false
     env:
       BASE_URL: https://lum.id
       CI_E2E_LONG: "1"
       CI_E2E_LONG_USERS: "5"
-      E2E_GMAIL_USER: ${{ secrets.E2E_GMAIL_USER }}
-      E2E_GMAIL_APP_PASSWORD: ${{ secrets.E2E_GMAIL_APP_PASSWORD }}
-      E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
-      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
-      E2E_INVITATION_CODE: ${{ secrets.E2E_INVITATION_CODE }}
+      # OTP + invite + cleanup all come from the admin (not super_admin) PAT
+      # CI already holds — see the fresh-user-journey job for the why.
+      E2E_ADMIN_PAT: ${{ secrets.E2E_ADMIN_PAT }}
+      CI_E2E_LOCAL_OTP: "1"
+      LUMID_OTP_TRANSPORT: api
+      PLAYWRIGHT_JSON_OUTPUT_NAME: pw-results.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -197,8 +203,18 @@ jobs:
         run: docker info
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+      - name: Mint invitation code for this run
+        run: node ci/fresh-user-ci.mjs mint-invite "e2e:fresh-user-auto-quant run ${{ github.run_id }}" 5
       - name: Run fresh-user auto-quant spec
-        run: npx playwright test tests/12-fresh-user-auto-quant.spec.ts --project=chromium
+        run: npx playwright test tests/12-fresh-user-auto-quant.spec.ts --project=chromium --reporter=list,json,html
+      - name: Fail if the spec did not actually run
+        if: ${{ !cancelled() }}
+        run: node ci/fresh-user-ci.mjs assert-ran pw-results.json 1
+      - name: Revoke invitation code and delete this job's accounts
+        if: ${{ always() }}
+        run: |
+          node ci/fresh-user-ci.mjs revoke-invite || true
+          node ci/fresh-user-ci.mjs sweep lumid-e2e-aq- 0 || true
       - name: Upload report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -214,17 +230,33 @@ jobs:
     # three-axis honesty table. Nightly only (slow, mints PATs against prod,
     # and the backtest→verdict half depends on the worker draining). No docker
     # needed — this is a pure UI walk, unlike fresh-user-auto-quant.
+    #
+    # Until 2026-09-28 this job ran 0 tests (no OTP source, no invitation
+    # code) and concluded success. Now, from the admin (NOT super_admin) PAT
+    # CI already holds, and with no cluster access:
+    #   invite  — minted per run (single use, 1-day TTL, note names the run),
+    #             revoked at the end;
+    #   OTP     — identity's GET /api/v1/admin/e2e/signup-otp, which serves only
+    #             lumid-e2e-…@yao.lu test addresses (LUMID_OTP_TRANSPORT=api);
+    #   cleanup — the spec deletes its account; a sweep removes any
+    #             lumid-e2e-fresh-* account a crashed run left (> 60 min old).
+    # E2E_FRESH_REQUIRE=1 makes "cannot run" a failure, and assert-ran fails
+    # the job unless >= 1 test passed and none skipped.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    concurrency:
+      group: fresh-user-journey
+      cancel-in-progress: false
     env:
       BASE_URL: https://lum.id
       CI_E2E_LONG: "1"
-      E2E_GMAIL_USER: ${{ secrets.E2E_GMAIL_USER }}
-      E2E_GMAIL_APP_PASSWORD: ${{ secrets.E2E_GMAIL_APP_PASSWORD }}
-      E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
-      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
-      E2E_INVITATION_CODE: ${{ secrets.E2E_INVITATION_CODE }}
+      E2E_FRESH_REQUIRE: "1"
+      E2E_ADMIN_PAT: ${{ secrets.E2E_ADMIN_PAT }}
+      CI_E2E_LOCAL_OTP: "1"
+      LUMID_OTP_TRANSPORT: api
+      PLAYWRIGHT_JSON_OUTPUT_NAME: pw-results.json
+      E2E_FRESH_LEDGER: fresh-user-journey.md
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -234,12 +266,34 @@ jobs:
       - run: npm ci
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+      - name: Mint invitation code for this run
+        run: node ci/fresh-user-ci.mjs mint-invite "e2e:fresh-user-journey run ${{ github.run_id }}" 1
       - name: Run fresh-user journey spec
-        run: npx playwright test tests/fresh-user-journey.spec.ts --project=chromium
+        run: npx playwright test tests/fresh-user-journey.spec.ts --project=chromium --reporter=list,json,html
+      - name: Step ledger
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f "$E2E_FRESH_LEDGER" ]; then
+            cat "$E2E_FRESH_LEDGER"
+            cat "$E2E_FRESH_LEDGER" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::no step ledger written"
+          fi
+      - name: Fail if the journey did not actually run
+        if: ${{ !cancelled() }}
+        run: node ci/fresh-user-ci.mjs assert-ran pw-results.json 1
+      - name: Revoke invitation code and sweep stale journey accounts
+        if: ${{ always() }}
+        run: |
+          node ci/fresh-user-ci.mjs revoke-invite || true
+          node ci/fresh-user-ci.mjs sweep lumid-e2e-fresh- 60 || true
       - name: Upload report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-fresh-user-journey-report-${{ github.run_id }}
-          path: playwright-report/
+          path: |
+            playwright-report/
+            fresh-user-journey.md
+            pw-results.json
           retention-days: 7

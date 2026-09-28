@@ -8,14 +8,20 @@
 //
 //   docker  — the original local-compose shape (docker exec / docker run)
 //   kubectl — prod/UKS: exec into the redis-trading pod
+//   api     — CI: identity's admin-gated GET /api/v1/admin/e2e/signup-otp,
+//             which serves ONLY e2e test addresses (lumid-e2e-…@yao.lu).
+//             Needs an admin PAT (E2E_ADMIN_PAT, or ~/.lumid/admin.pat) and
+//             no cluster access at all — the only transport a GitHub-hosted
+//             runner can use. Added for scorecard row 10 (2026-09-28).
 //
 // Chosen by LUMID_OTP_TRANSPORT (default: "kubectl" when KUBECONFIG is
 // set or the docker binary is absent, else "docker").
 //
-// Gated by CI_E2E_LOCAL_OTP=1. CI never sets this — nightly cron uses
-// the real mailbox path so the email round-trip is exercised at least
-// once a day. Use this locally to skip the OTP-poll latency (~10-30s
-// per user) and the Gmail-app-password requirement.
+// Gated by CI_E2E_LOCAL_OTP=1. Locally it skips the OTP-poll latency
+// (~10-30s per user) and the Gmail-app-password requirement. CI's nightly
+// fresh-user jobs set it with LUMID_OTP_TRANSPORT=api: no test mailbox was
+// ever provisioned, and without an OTP source those jobs skipped every test
+// and still concluded success (found 2026-09-27).
 //
 // NOTE this reads a live credential out of a production Redis. It is
 // deliberately opt-in and deliberately narrow: one GET, one key, keyed
@@ -23,16 +29,16 @@
 
 import { spawnSync } from "node:child_process";
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 export function localOtpEnabled(): boolean {
 	return process.env.CI_E2E_LOCAL_OTP === "1";
 }
 
-type Transport = "docker" | "kubectl";
+type Transport = "docker" | "kubectl" | "api";
 
 function transport(): Transport {
 	const t = process.env.LUMID_OTP_TRANSPORT;
-	if (t === "docker" || t === "kubectl") return t;
+	if (t === "docker" || t === "kubectl" || t === "api") return t;
 	if (process.env.KUBECONFIG) return "kubectl";
 	// Probe for the identity CONTAINER, not the docker daemon.
 	//
@@ -152,6 +158,42 @@ function dockerGet(key: string, db: string): { out: string; status: number | nul
 	return { out: (r.stdout || "").trim(), status: r.status, err: (r.stderr || "").trim() };
 }
 
+function adminPat(): string {
+	if (process.env.E2E_ADMIN_PAT) return process.env.E2E_ADMIN_PAT.trim();
+	const f = `${process.env.HOME || ""}/.lumid/admin.pat`;
+	try {
+		return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
+	} catch {
+		return "";
+	}
+}
+
+// One read through identity's e2e-only OTP route. Maps onto the same
+// {out,status,err} shape as the Redis transports: status 0 + empty out means
+// "not written yet" (the route answers 200 with code:null), anything else is a
+// refusal, surfaced verbatim so a 403/404 is never mis-reported as a missing
+// OTP.
+async function apiGet(email: string): Promise<{ out: string; status: number | null; err: string }> {
+	const base = process.env.BASE_URL || "https://lum.id";
+	const pat = adminPat();
+	if (!pat) return { out: "", status: 1, err: "no admin PAT (E2E_ADMIN_PAT or ~/.lumid/admin.pat)" };
+	try {
+		const r = await fetch(`${base}/api/v1/admin/e2e/signup-otp?email=${encodeURIComponent(email)}`, {
+			headers: { Authorization: `Bearer ${pat}` },
+			signal: AbortSignal.timeout(15_000),
+		});
+		const body = await r.text();
+		if (!r.ok) {
+			// 401/403/404 are answers, not blips: the server said no.
+			return { out: `DENIED HTTP ${r.status}: ${body.slice(0, 200)}`, status: 0, err: "" };
+		}
+		const code = JSON.parse(body)?.data?.code;
+		return { out: typeof code === "string" ? code : "", status: 0, err: "" };
+	} catch (e) {
+		return { out: "", status: 1, err: String(e) };
+	}
+}
+
 // redis-cli reports a REFUSED command by printing the error reply to
 // STDOUT and exiting 0, so exit status alone cannot tell "the server said
 // no" from "the key is not there yet". Without this check a NOAUTH burns
@@ -178,13 +220,14 @@ export async function readOtpFromRedis(
 	let lastErr = "";
 	let consecutiveTransportFailures = 0;
 	while (Date.now() < deadline) {
-		const r = via === "kubectl" ? kubectlGet(key, db) : dockerGet(key, db);
+		const r =
+			via === "api" ? await apiGet(email) : via === "kubectl" ? kubectlGet(key, db) : dockerGet(key, db);
 		if (/^\d{6}$/.test(r.out)) return r.out;
 		// The server answered and said no. Retrying cannot help, so fail now
 		// with what it actually said.
 		if (REDIS_REFUSAL.test(r.out)) {
 			throw new Error(
-				`Redis refused the OTP read (${via}, db ${db}): ${r.out}. ` +
+				`The OTP source refused the read (${via}${via === "api" ? "" : `, db ${db}`}): ${r.out}. ` +
 				"This is an auth/permission failure, not a missing OTP.",
 			);
 		}
