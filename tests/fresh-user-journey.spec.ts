@@ -54,6 +54,7 @@ const APP_SLUG = "a3f48236-ffe9-4fb9-9548-6e044d5cd9c7/quant-research";
 const APP_DISPLAY = "Quant Research";
 
 const LONG_ENABLED = process.env.CI_E2E_LONG === "1";
+const REQUIRE = process.env.E2E_FRESH_REQUIRE === "1";
 const LEDGER = process.env.E2E_FRESH_LEDGER || "/tmp/fresh-user-journey.md";
 
 // A backtest is submitted then polled, "usually minutes later". Bounded so a
@@ -227,10 +228,16 @@ test.describe("10 — fresh-user journey, unaided, non-admin [long]", () => {
 	let baseURL = "https://lum.id";
 
 	test.beforeAll(async ({}, testInfo) => {
-		if (!LONG_ENABLED) testInfo.skip(true, "CI_E2E_LONG=1 to enable this long e2e");
-		if (!localOtpEnabled() && !process.env.E2E_GMAIL_APP_PASSWORD) {
-			testInfo.skip(true, "No OTP source: CI_E2E_LOCAL_OTP=1 or E2E_GMAIL_APP_PASSWORD");
-		}
+		// E2E_FRESH_REQUIRE=1 (set by CI) turns every "cannot run" into a
+		// FAILURE. Skipping here is what let the nightly job report success
+		// with 0 tests run for its whole life (found 2026-09-27).
+		const missing = !LONG_ENABLED
+			? "CI_E2E_LONG=1 to enable this long e2e"
+			: !localOtpEnabled() && !process.env.E2E_GMAIL_APP_PASSWORD
+				? "No OTP source: CI_E2E_LOCAL_OTP=1 (LUMID_OTP_TRANSPORT=api|kubectl|docker) or E2E_GMAIL_APP_PASSWORD"
+				: "";
+		if (missing && REQUIRE) throw new Error(`E2E_FRESH_REQUIRE=1 but the journey cannot run: ${missing}`);
+		if (missing) testInfo.skip(true, missing);
 		inviteCode = process.env.E2E_INVITATION_CODE || "";
 		expect(inviteCode, "E2E_INVITATION_CODE is required — a code-less user is bounced to /auth/redeem-invite from every guarded route").toBeTruthy();
 	});
@@ -555,6 +562,10 @@ test.describe("10 — fresh-user journey, unaided, non-admin [long]", () => {
 		console.log(`\nLedger written to ${LEDGER}`);
 
 		// Clean up the throwaway account — the fixture warns they accumulate.
-		if (user) await deleteUser(baseURL, user.email);
+		// Logged either way: an undeleted account is a cost, not a silent one.
+		if (user) {
+			const gone = await deleteUser(baseURL, user.email);
+			console.log(`cleanup: ${user.email} ${gone ? "deleted" : "NOT deleted (no admin credential, or the delete failed)"}`);
+		}
 	});
 });
