@@ -304,3 +304,70 @@ jobs:
             fresh-user-journey.md
             pw-results.json
           retention-days: 7
+
+  persona-undergrad:
+    # GOALS.md row 18 — "Undergrad journey stages that fail", J1–J9. A fresh
+    # role=user undergrad walks lum.id → Marketplace → Quant Research → chat
+    # writes a strategy → Backtest → judge → iterate → watch runs → Disable,
+    # and every stage records ok/why/clicks/px-scrolled/url/reload/ms plus a
+    # screenshot into results/persona-undergrad.json.
+    #
+    # A MEASUREMENT, not a gate: most stages are expected red today, so the
+    # job is continue-on-error and the spec never stops at the first failure.
+    # Secrets exactly as fresh-user-journey: invite minted per run and revoked
+    # after, OTP via identity's admin-gated e2e route (lumid-e2e-…@yao.lu
+    # only), admin PAT used server-side in node only. The spec disables every
+    # strategy it created, revokes the persona's tokens and deletes the
+    # account; the sweep catches a crashed run's leftovers (> 90 min old).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    continue-on-error: true
+    concurrency:
+      group: persona-undergrad
+      cancel-in-progress: false
+    env:
+      BASE_URL: https://lum.id
+      E2E_PERSONA: "1"
+      E2E_ADMIN_PAT: ${{ secrets.E2E_ADMIN_PAT }}
+      CI_E2E_LOCAL_OTP: "1"
+      LUMID_OTP_TRANSPORT: api
+      E2E_PERSONA_OUT: results/persona-undergrad.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Mint invitation code for this run
+        run: node ci/fresh-user-ci.mjs mint-invite "e2e:persona-undergrad run ${{ github.run_id }}" 1
+      - name: Run undergrad persona journey
+        # retries 0: a retry would create a second account and double-submit.
+        run: npx playwright test tests/persona-undergrad.spec.ts --project=chromium --retries=0 --reporter=list
+      - name: Stage summary
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f "$E2E_PERSONA_OUT" ]; then
+            node -e '
+              const s = require("./" + process.env.E2E_PERSONA_OUT);
+              const rows = s.stages.map(x => `| ${x.id} | ${x.name} | ${x.skipped ? "skip" : x.ok ? "PASS" : "FAIL"} | ${x.clicks} | ${x.px_scrolled ?? "?"} | ${x.url_survives_reload ?? "?"} | ${Math.round(x.ms/1000)} | ${String(x.why).replace(/\|/g,"\\|").slice(0,200)} |`);
+              console.log(["## Undergrad persona — " + s.failed_count + " of " + s.stages.length + " stages failed", "", "| stage | name | result | clicks | px | reload | s | why |", "|---|---|---|---|---|---|---|---|", ...rows, "", "cleanup: `" + JSON.stringify(s.cleanup) + "`"].join("\n"));
+            ' | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::no persona summary written"
+          fi
+      - name: Revoke invitation code and sweep stale persona accounts
+        if: ${{ always() }}
+        run: |
+          node ci/fresh-user-ci.mjs revoke-invite || true
+          node ci/fresh-user-ci.mjs sweep lumid-e2e-persona-ug- 90 || true
+      - name: Upload persona results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: persona-undergrad-${{ github.run_id }}
+          path: results/
+          retention-days: 14

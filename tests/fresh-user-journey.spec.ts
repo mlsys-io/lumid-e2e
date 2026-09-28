@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { createUser, deleteUser, type TestUser } from "../fixtures/test-user";
 import { localOtpEnabled } from "../fixtures/otp-redis";
 import { gotoRedirect } from "../fixtures/nav";
+import { loginViaUi } from "../fixtures/login-ui";
 
 // Journey — can a BRAND-NEW non-admin account complete the documented walk,
 // unaided, through the UI?
@@ -173,24 +174,6 @@ async function timed<T>(
 		});
 		throw e;
 	}
-}
-
-async function loginViaUi(page: Page, user: TestUser): Promise<void> {
-	// The login page intermittently paints with zero inputs on a cold pod
-	// (measured 2026-08-26, documented in specs 26/27). Retry the render a few
-	// times before giving up — a single reload is not always enough.
-	for (let attempt = 0; attempt < 3; attempt++) {
-		await page.goto("/auth/login");
-		if (await page.locator("#email").count().catch(() => 0)) break;
-		await page.reload().catch(() => {});
-	}
-	await expect(page.locator("#email")).toBeVisible({ timeout: 30_000 });
-	await page.locator("#email").fill(user.email);
-	await page.locator("#password").fill(user.password);
-	await page.getByRole("button", { name: /sign in/i }).click();
-	await page.waitForURL(/\/auth\/redeem-invite|\/studio|\/dashboard|\/account(\/|$)/, {
-		timeout: 30_000,
-	});
 }
 
 /** Mint a PAT the way §1 says to — from an authenticated browser session. */
