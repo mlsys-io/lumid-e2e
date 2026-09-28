@@ -177,6 +177,13 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # KNOWN RED, not gating (2026-09-28): the spec installs via
+    # `curl lum.id/start | bash`, and /start 404s — the landing runs
+    # lumid-landing-readdy:v1.0.0, not the landing-installer overlay that
+    # baked install.sh in. The local install was retired in July (WS5), so
+    # whether /start comes back is a product decision. The job still FAILS
+    # visibly (assert-ran) rather than skipping; drop this line once decided.
+    continue-on-error: true
     # One at a time: the end-of-job sweep deletes this job's lumid-e2e-aq-*
     # accounts, which must not be a concurrent run's live ones.
     concurrency:
