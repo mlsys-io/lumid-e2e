@@ -256,8 +256,14 @@ async function chatShot(name, { as = "reader", url, say, tool, pre, fresh = true
     // The caption names a chip, so the chip must be ON SCREEN; the stream
     // mentions every tool in the catalogue and proves nothing.
     const ok = !tool || (tool instanceof RegExp ? tool.test(body) : body.includes(tool));
-    fs.writeFileSync(`${OUT}/${name}.stream.txt`, stream.slice(0, 40000));
+    fs.writeFileSync(`${OUT}/${name}.stream.txt`, stream.slice(0, 400000));
     if (!ok) { results.push({ name, ok: false, why: `tool ${tool} never appeared`, approval: sawApproval }); return; }
+    // Chips alone are not an answer: a turn can run its tools and then stream
+    // no text (identity < v0.5.426 did exactly that on an oversized result),
+    // and that image shows a question with no reply under it.
+    if (say && !sawApproval && !/"type":"text"/.test(stream)) {
+      results.push({ name, ok: false, why: "turn ran tools but streamed no answer text" }); return;
+    }
     await page.screenshot({ path: `${OUT}/${name}.png` });
     results.push({ name, ok: true, approval: sawApproval });
   } catch (e) { results.push({ name, ok: false, why: String(e).slice(0, 160) }); }
@@ -276,7 +282,7 @@ await chatShot("first-run-discuss-2", { url: "/studio/apps/quant-research?surfac
   } });
 await chatShot("first-run-chat-analytics", { url: "/studio/apps/quant-research?surface=strategies",
   say: "Look at the backtest results on the feed. How many are real on all three honesty axes, how many took zero trades, and what is the outcome breakdown? Then tell me which of them are mine.",
-  tool: "lqt_mailbox_read", settleQuiet: 12 });
+  tool: /lqt_mailbox_read|list_runs|run_result|app_read|list_experiments/, settleQuiet: 12 });
 await chatShot("experiments-chat-results", { as: process.env.EXP_AS || "reader", url: "/studio/apps/mbb-consultant",
   say: "how did the analyst_local_gpu experiment turn out? give me the numbers per arm", tool: /list_experiments|experiment_status/, settleQuiet: 12 });
 await chatShot("experiments-chat-controlplane", { url: "/studio/apps/quant-research?surface=experiments",
