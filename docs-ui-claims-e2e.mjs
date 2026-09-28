@@ -38,13 +38,13 @@ const open = async (url, wait = 6000) => {
 };
 
 // ─── first-run §1: the very first instruction in the onboarding doc ───
-note('first-run §1 — "Go to https://lum.id/studio/account/tokens and click Mint your first token"');
+note('first-run §1 — "Go to https://lum.id/studio/account/tokens and click **New token**"');
 {
   const { page, txt, errs } = await open("/studio/account/tokens");
   await page.screenshot({ path: `${OUT}/tokens.png` }).catch(() => {});
   check("tokens: the page the doc sends you to renders", txt.trim().length > 40,
     JSON.stringify(txt.slice(0, 120)));
-  check('tokens: a "Mint" control exists, as the doc says', /mint/i.test(txt),
+  check('tokens: the "New token" button the doc names exists', /\bNew token\b/.test(txt),
     JSON.stringify(txt.slice(0, 200)));
   check("tokens: no uncaught page errors", errs.length === 0, errs[0] || "");
   await page.close();
@@ -127,7 +127,7 @@ note('first-run L783/829 — MBB "**Work**" tab, "Workflows → interview / case
   console.log(`      live tabs: ${JSON.stringify(tabs)}`);
   check('mbb: the "Work" tab the doc starts you on exists', tabs.includes("Work"),
     `live tabs ${JSON.stringify(tabs)}`);
-  check('mbb §10: "Pick AI interviews you ... Press Start" — the mode picker is present',
+  check('mbb §10: "Pick AI interviews you … press Interview me" — the mode picker is present',
     /interview/i.test(txt), JSON.stringify(txt.slice(0, 200)));
   check("mbb: no uncaught page errors", errs.length === 0, errs[0] || "");
   await page.close();
@@ -207,6 +207,60 @@ note('first-run §6 — "Leave the instrument blank … the *Backtest* dialog\'s
   check('backtest: blank auto-picks a settled instrument, as §6 says', /auto-pick/i.test(placeholder),
     JSON.stringify(placeholder));
   check("backtest: no uncaught page errors", errs.length === 0, errs[0] || "");
+  await page.close();
+}
+
+// ─── first-run §3: Marketplace → Quant Research → "Add to my account" ──
+note('first-run §3 — "Open **Marketplace** … find **Quant Research**, and click **Add to my account**"');
+{
+  const { page, errs } = await open("/studio/library/marketplace", 4000);
+  // The catalogue loads after the shell; poll for it rather than guess a wait.
+  let txt = "";
+  for (let i = 0; i < 20 && !/Quant Research/.test(txt); i++) {
+    txt = (await page.locator("main").first().innerText().catch(() => "")) || "";
+    if (!/Quant Research/.test(txt)) await page.waitForTimeout(1000);
+  }
+  await page.screenshot({ path: `${OUT}/marketplace.png`, fullPage: true }).catch(() => {});
+  check("marketplace: Quant Research is listed", /Quant Research/.test(txt), txt.slice(0, 160));
+  // The reader already has it, so its own card reads "Added · Open"; any card
+  // not yet added reads "Add to my account". Both are the doc's words.
+  const btns = await page.locator("main button").allInnerTexts().catch(() => []);
+  check('marketplace: cards offer "Add to my account" / "Added · Open", as the doc says',
+    btns.some((b) => /Add to my account|Added · Open/.test(b)), JSON.stringify(btns.slice(0, 12)));
+  check("marketplace: no uncaught page errors", errs.length === 0, errs[0] || "");
+  await page.close();
+}
+
+// ─── first-run §5: "Open Quant Research → Strategies" ────────────────
+note('first-run §5 — "Open **Quant Research → Strategies** in the sidebar"');
+{
+  const { page, txt, errs } = await open("/studio/apps/quant-research?surface=strategies", 9000);
+  check("strategies: the surface renders (not stuck loading)",
+    /Your strategies/.test(txt) && !/Loading quant-research/.test(txt), txt.slice(0, 160));
+  check("strategies: no uncaught page errors", errs.length === 0, errs[0] || "");
+  await page.close();
+}
+
+// ─── first-run §10: pick a mode, pick a case, press "Interview me" ────
+// Never pressed: it opens a chat and spends a model turn.
+note('first-run §10 — "Pick **AI interviews you** … Pick a case, then press **Interview me**"');
+{
+  const { page, txt, errs } = await open("/studio/apps/mbb-consultant", 8000);
+  for (const mode of ["AI interviews you", "AI answers a case", "Ask anything"]) {
+    check(`mbb: the mode "${mode}" the doc's table names exists`, txt.includes(mode), "");
+  }
+  let btns = [];
+  try {
+    await page.locator("main button", { hasText: /^AI interviews you/ }).first().click({ timeout: 8000 });
+    await page.waitForTimeout(800);
+    await page.locator("main button", { hasText: /·\s*(Easy|Medium|Hard)/ }).first().click({ timeout: 8000 });
+    await page.waitForTimeout(1500);
+    btns = (await page.locator("main button").allInnerTexts()).map((b) => b.trim());
+  } catch { /* recorded below */ }
+  check('mbb: after a mode and a case, the button reads "Interview me"',
+    btns.some((b) => /^Interview me$/i.test(b)), JSON.stringify(btns.filter((b) => b.length < 30).slice(0, 10)));
+  check('mbb: there is no "Start" button (the old doc wording)', !btns.some((b) => /^Start$/.test(b)), "");
+  check("mbb: no uncaught page errors", errs.length === 0, errs[0] || "");
   await page.close();
 }
 
