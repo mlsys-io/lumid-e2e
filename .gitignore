@@ -20,3 +20,6 @@ dashboard_scan_report.json
 # Local render harness output (visual review)
 render-out/
 .pat-tmp
+
+# Persona journey output (JSON + screenshots)
+results/
