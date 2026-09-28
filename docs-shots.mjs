@@ -302,7 +302,7 @@ async function chatShot(name, { as = "reader", url, say, tool, pre, fresh = true
     // The caption names a chip, so the chip must be ON SCREEN; the stream
     // mentions every tool in the catalogue and proves nothing.
     const ok = !tool || (tool instanceof RegExp ? tool.test(body) : body.includes(tool));
-    fs.writeFileSync(`${OUT}/${name}.stream.txt`, stream.slice(0, 40000));
+    fs.writeFileSync(`${OUT}/${name}.stream.txt`, stream.slice(-400000));
     if (!ok) { results.push({ name, ok: false, why: `tool ${tool} never appeared`, approval: sawApproval }); return; }
     await page.screenshot({ path: `${OUT}/${name}.png` });
     results.push({ name, ok: true, approval: sawApproval });
@@ -355,7 +355,9 @@ const waitIdle = async (p, quiet = 10, max = 300) => {
   return false;
 };
 await chatShot("mbb-chat-scored", { url: "/studio/apps/mbb-consultant", settleQuiet: 15, maxWait: 900,
-  doneWhen: /keypoint|covered|Judges?\b|\/\s*\d+\s*(keypoints)?/i,
+  // The verdict in the reply ("5 of 13 keypoints"), not the app_judge chip
+  // name, which appears mid-turn.
+  doneWhen: /\d+\s+of\s+\d+\s+keypoints|keypoints covered/i,
   pre: async (p) => {
     if (!(await waitText(p, /AI interviews you/))) return false;
     const start = await pickInterviewCase(p);
