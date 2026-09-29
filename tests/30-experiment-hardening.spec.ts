@@ -199,7 +199,7 @@ test.describe("@wide surfaces render across apps", () => {
 test.describe("@wide the fleet actually received the declarations", () => {
 	test("the published spec carries the declared experiments (no tab — they render in place)", async () => {
 		// Two-tab redesign 2026-09-04: experiments have no tab of their own;
-		// they render on the loop that feeds them (Metric & arms). Assert the
+		// they render on the loop that feeds them (Metric & experiments). Assert the
 		// INVARIANT (the original two are present), not the census — pinning
 		// an exact list made this test fail the day the kol_alpha lane was
 		// deliberately added (2026-09-05), which is a stale-assertion failure

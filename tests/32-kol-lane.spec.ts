@@ -113,9 +113,9 @@ test.describe("@kol it renders as a derived surface — no UI code", () => {
 			.toBeVisible({ timeout: 30_000 });
 	});
 
-	test("selecting it shows Metric & arms with kol_alpha in place", async ({ page }) => {
+	test("selecting it shows Metric & experiments with kol_alpha in place", async ({ page }) => {
 		await page.goto(`/studio/apps/${QUANT}?surface=workflows&selected=kol_strategy`);
-		await expect(page.getByText(/metric & arms/i).first())
+		await expect(page.getByText(/metric & experiments/i).first())
 			.toBeVisible({ timeout: 30_000 });
 		await expect(page.getByText(/kol.?alpha/i).first())
 			.toBeVisible({ timeout: 25_000 });
@@ -131,7 +131,7 @@ test.describe("@kol it renders as a derived surface — no UI code", () => {
 		// current has no runnable config → labelled, never a dead button.
 		await expect(page.getByText(/measured passively/i).first()).toBeVisible({ timeout: 20_000 });
 		// musk_v1 is self-sufficient → a real Run button (one-click, no subject ask).
-		await expect(page.getByRole("button", { name: /run this arm|run \d+ more/i }).first())
+		await expect(page.getByRole("button", { name: /^run$/i }).first())
 			.toBeVisible({ timeout: 20_000 });
 	});
 });
