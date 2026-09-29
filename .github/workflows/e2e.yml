@@ -274,7 +274,10 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
       - name: Mint invitation code for this run
-        run: node ci/fresh-user-ci.mjs mint-invite "e2e:fresh-user-journey run ${{ github.run_id }}" 1
+        # One use per ATTEMPT: identity v0.5.430 (#108) consumes a use at
+        # signup, and Playwright retries (2) each sign up a fresh account. A
+        # 1-use code made both retries fail with "invitation code exhausted".
+        run: node ci/fresh-user-ci.mjs mint-invite "e2e:fresh-user-journey run ${{ github.run_id }}" 3
       - name: Run fresh-user journey spec
         run: npx playwright test tests/fresh-user-journey.spec.ts --project=chromium --reporter=list,json,html
       - name: Step ledger
