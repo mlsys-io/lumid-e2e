@@ -80,7 +80,7 @@ test.describe("18 — studio streamline", () => {
 		await expect(page).toHaveURL(/\/studio\/library\/skills/, { timeout: 10_000 });
 		await gotoRedirect(page, "/studio/experiments");
 		await expect(page).toHaveURL(/\/studio\/library\/experiments/, { timeout: 10_000 });
-		for (const label of ["Marketplace", "Skills", "Experiments"]) {
+		for (const label of ["Marketplace", "Skills", "Studies"]) {
 			await expect(page.getByRole("link", { name: label }).first()).toBeVisible();
 		}
 	});
@@ -132,14 +132,14 @@ test.describe("18 — studio streamline", () => {
 		await gotoRedirect(page, "/studio/library/experiments");
 		// Was /Experiments \(/ — the count in parens went away when the page was
 		// ported onto the shared IndexList, which renders a bare `title` heading
-		// ("Experiments") and puts the row count nowhere. Assert the heading so
+		// ("Studies"; "Experiments" before the study relabel) and puts the row count nowhere. Assert the heading so
 		// this can't pass on the nav tab of the same name.
-		// Scoped to main: the shell's banner also renders an h1 "Experiments", so
+		// Scoped to main: the shell's banner also renders an h1 "Studies", so
 		// an unscoped role query is a strict-mode violation rather than a missing
 		// element -- the page is rendering fine. Same collision class as the
 		// "Display name" one in spec 05.
 		await expect(
-			page.getByRole("main").getByRole("heading", { name: "Experiments" }).first(),
+			page.getByRole("main").getByRole("heading", { name: "Studies" }).first(),
 		).toBeVisible({ timeout: 15_000 });
 	});
 

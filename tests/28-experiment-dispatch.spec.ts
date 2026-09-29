@@ -43,14 +43,21 @@ test.afterAll(async () => { await owner?.dispose(); });
 // TWO-TAB SHAPE (2026-09-04 redesign, plan review-a-previous-work-glimmering-
 // taco.md): there is deliberately NO Experiments tab. Experiments render IN
 // PLACE on the loop that feeds them — the workflow observability panel's
-// "Metric & arms" section (ui v0.5.326+). These assertions are what a session
+// "Metric & experiments" section (ui v0.5.326+; "Metric & arms" before the study/experiment relabel). These assertions are what a session
 // reads to learn the intended shape: asserting the old tab here is exactly
 // what caused a peer session to "restore" it as a regression (0.7.37/0.9.14,
 // both reverted). The arms UI itself (ExperimentsPanel) is unchanged and is
 // reached through the workflow page.
+async function openStudyTab(page: Page) {
+	await page.getByRole("tab", { name: /^(study|measurement)$/i }).first().click({ timeout: 30_000 });
+}
+
 async function openExperiments(page: Page, app: string, loop: string) {
 	await page.goto(`/studio/apps/${app}?surface=workflows&selected=${loop}`);
-	await expect(page.getByText(/metric & arms/i).first()).toBeVisible({ timeout: 30_000 });
+	// The workflow page opens on Runs; the study sits behind its own tab
+	// ("Study" when one is attached, "Measurement" before). Tab bar: ui v0.5.4xx.
+	await openStudyTab(page);
+	await expect(page.getByText(/metric & experiments/i).first()).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe("@experiments control plane — UI structure", () => {
@@ -67,7 +74,7 @@ test.describe("@experiments control plane — UI structure", () => {
 		}
 	});
 
-	test("a loop with metric+dataset shows Metric & arms in place", async ({ page }) => {
+	test("a loop with metric+dataset shows Metric & experiments in place", async ({ page }) => {
 		await openExperiments(page, QUANT, "backtest");
 		await expect(page.getByText(/backtest evidence/i).first()).toBeVisible({ timeout: 25_000 });
 	});
@@ -94,7 +101,7 @@ test.describe("@experiments control plane — UI structure", () => {
 	test("no unearned verdict is rendered", async ({ page }) => {
 		// On QUANT, not CONSULTANT: the browser session (e2e-admin) has
 		// quant-research installed but not mbb-consultant, and a workflow page
-		// for an uninstalled app never reaches Metric & arms.
+		// for an uninstalled app never reaches Metric & experiments.
 		await openExperiments(page, QUANT, "backtest");
 		await expect(page.getByText(/✓ .*criteria met/i)).toHaveCount(0);
 	});
