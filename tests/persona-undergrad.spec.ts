@@ -361,7 +361,9 @@ async function honestyRows(page: Page): Promise<BtRow[]> {
 	return page
 		.locator("table")
 		.evaluateAll((tables) => {
-			const t = tables.find((x) => /Presentable\?/.test(x.querySelector("thead")?.textContent ?? ""));
+			// quant-research 0.7.112 cut this table to six columns: `Real?` replaced
+			// `Presentable?`, and the three axis columns moved into `Why`'s words.
+			const t = tables.find((x) => /Presentable\?|Real\?/.test(x.querySelector("thead")?.textContent ?? ""));
 			if (!t) return [];
 			const heads = [...t.querySelectorAll("thead th")].map((h) => (h.textContent ?? "").trim());
 			return [...t.querySelectorAll("tbody tr")].map((tr) => {
@@ -376,8 +378,31 @@ async function honestyRows(page: Page): Promise<BtRow[]> {
 
 const filled = (v: string | undefined) => !!v && v !== "—" && v !== "-";
 
+// Map the six-column table (0.7.112) onto the old field names, from what the
+// row actually SAYS — never assumed. `Why` names the axes that were not real
+// ("Not a performance number: the signals were not real") or says all three
+// were ("Real on all three axes" / "Real data, but the rule never fired").
+function normalizeRow(r: BtRow): BtRow {
+	if (filled(r.Prices) || !("Real?" in r)) return r;
+	const why = r.Why ?? "";
+	const out: BtRow = { ...r, "Presentable?": r["Real?"] };
+	if (/Real on all three axes|Real data, but/i.test(why)) {
+		out.Prices = out.Signals = out.Settlement = "real";
+	} else {
+		const m = why.match(/Not a performance number: the (.+?) were not real/i);
+		if (m) {
+			const bad = m[1];
+			out.Prices = /prices/.test(bad) ? "not real" : "real";
+			out.Signals = /signals/.test(bad) ? "not real" : "real";
+			out.Settlement = /settlement/.test(bad) ? "not real" : "real";
+		}
+	}
+	if (r["PnL (ticks)"] !== undefined && out["PnL (REAL)"] === undefined) out["PnL (REAL)"] = r["PnL (ticks)"];
+	return out;
+}
+
 function resultRow(rows: BtRow[]): BtRow | undefined {
-	return rows.find((r) => !/queued|running|submitted/i.test(r.Status ?? "") && filled(r.Prices));
+	return rows.map(normalizeRow).find((r) => !/queued|running|submitted/i.test(r.Status ?? "") && filled(r.Prices));
 }
 
 // ── the walk ──────────────────────────────────────────────────────────────
@@ -752,7 +777,7 @@ test.describe("persona — undergrad quant-research journey J1–J9 [measurement
 					m.details.seconds_to_result = result ? Math.round((Date.now() - tSubmit) / 1000) : null;
 					m.details.rows_seen = rows.length;
 					if (result) {
-						await m.measure(p.locator("table").filter({ hasText: "Presentable?" }).locator("tbody tr").filter({ hasText: result.Prices }).first());
+						await m.measure(p.locator("table").filter({ hasText: /Presentable\?|Real\?/ }).locator("tbody tr").first());
 						m.survives = await survivesReload(p, () => p.getByText("Backtests for this strategy"));
 					}
 					const axes = result
@@ -784,7 +809,7 @@ test.describe("persona — undergrad quant-research journey J1–J9 [measurement
 					const why = result!.Why;
 					const hasPresentable = filled(presentable);
 					const hasWhy = filled(why);
-					const quality = /good|bad|profit|loss|beat|baseline|significan|edge|noise|too few|sample/i.test(why ?? "");
+					const quality = /good|bad|profit|loss|beat|baseline|significan|edge|noise|too few|sample|made|lost|per lot|never fired|one draw/i.test(why ?? "");
 					m.details = {
 						presentable,
 						why_text: why,
@@ -792,7 +817,7 @@ test.describe("persona — undergrad quant-research journey J1–J9 [measurement
 						filled_lots: result!["Filled lots"],
 						why_speaks_to_performance: quality,
 					};
-					m.survives = await survivesReload(p, () => p.getByText("Presentable?"));
+					m.survives = await survivesReload(p, () => p.getByText(/Presentable\?|Real\?/).first());
 					const ok = hasPresentable && hasWhy;
 					return {
 						ok,
