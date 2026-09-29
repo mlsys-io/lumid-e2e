@@ -81,9 +81,14 @@ test.describe("@experiments control plane — UI structure", () => {
 		// advertises them ("2 arms") without the buttons.
 		await page.getByText(/backtest evidence/i).first().click();
 		await expect(page.getByText(/measured passively/i).first()).toBeVisible({ timeout: 25_000 });
-		// `current` gets no button; `tape_covered` needs a SUBJECT so its
-		// button routes through the rail ("Run via chat"), never a bare POST.
-		await expect(page.getByRole("button", { name: /^run this arm$/i })).toHaveCount(0);
+		// `current` gets no button; `tape_covered` needs a SUBJECT so its one
+		// Run routes through the chat rail, never a bare POST. The label is
+		// the single verb "Run" everywhere (LumidOS VERBS.md), so the property
+		// is asserted on the count and on where that Run goes — a label check
+		// would pass whether or not the passive arm grew a dead button.
+		const runs = page.getByRole("button", { name: /^run$/i });
+		await expect(runs).toHaveCount(1);
+		await expect(runs.first()).toHaveAttribute("title", /chat asks/i);
 	});
 
 	test("no unearned verdict is rendered", async ({ page }) => {
