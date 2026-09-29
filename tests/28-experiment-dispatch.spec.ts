@@ -48,8 +48,15 @@ test.afterAll(async () => { await owner?.dispose(); });
 // what caused a peer session to "restore" it as a regression (0.7.37/0.9.14,
 // both reverted). The arms UI itself (ExperimentsPanel) is unchanged and is
 // reached through the workflow page.
+async function openStudyTab(page: Page) {
+	await page.getByRole("tab", { name: /^(study|measurement)$/i }).first().click({ timeout: 30_000 });
+}
+
 async function openExperiments(page: Page, app: string, loop: string) {
 	await page.goto(`/studio/apps/${app}?surface=workflows&selected=${loop}`);
+	// The workflow page opens on Runs; the study sits behind its own tab
+	// ("Study" when one is attached, "Measurement" before). Tab bar: ui v0.5.4xx.
+	await openStudyTab(page);
 	await expect(page.getByText(/metric & experiments/i).first()).toBeVisible({ timeout: 30_000 });
 }
 

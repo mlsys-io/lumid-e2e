@@ -115,6 +115,7 @@ test.describe("@kol it renders as a derived surface — no UI code", () => {
 
 	test("selecting it shows Metric & experiments with kol_alpha in place", async ({ page }) => {
 		await page.goto(`/studio/apps/${QUANT}?surface=workflows&selected=kol_strategy`);
+		await page.getByRole("tab", { name: /^(study|measurement)$/i }).first().click({ timeout: 30_000 });
 		await expect(page.getByText(/metric & experiments/i).first())
 			.toBeVisible({ timeout: 30_000 });
 		await expect(page.getByText(/kol.?alpha/i).first())
@@ -125,6 +126,7 @@ test.describe("@kol it renders as a derived surface — no UI code", () => {
 
 	test("musk_v1 offers a one-click Run; current is measured passively", async ({ page }) => {
 		await page.goto(`/studio/apps/${QUANT}?surface=workflows&selected=kol_strategy`);
+		await page.getByRole("tab", { name: /^(study|measurement)$/i }).first().click({ timeout: 30_000 });
 		await expect(page.getByText(/kol.?alpha/i).first()).toBeVisible({ timeout: 30_000 });
 		await page.getByText(/kol.?alpha/i).first().click();
 		await page.waitForTimeout(2000);
