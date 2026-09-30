@@ -64,10 +64,14 @@ test.describe("@chatbox experiment control plane", () => {
 		expect(r.tools).toContain("list_experiments");
 	});
 
+	// The chat offers the canonical workflow_run (mode "queue", study +
+	// experiment); dispatch_experiment_arm is hidden from the catalog but is what
+	// that call resolves to, and the chat records the tool that RAN (identity
+	// me_agent_canonical.go) — so the assertions below still name it.
 	test("the chatbox DISPATCHES a declared arm", async () => {
 		const r = await ask(
-			"Run the panel_single arm of the judge_panel_parity experiment on mbb-consultant, " +
-			"with args case=Case_002_FemaleExecutives_PK20_v5 and q=Q1. Use dispatch_experiment_arm.",
+			"Queue one run of the panel_single experiment of the judge_panel_parity study on mbb-consultant, " +
+			"with args case=Case_002_FemaleExecutives_PK20_v5 and q=Q1. Use workflow_run with mode queue.",
 		);
 		expect(r.tools, "the dispatch tool was never called").toContain("dispatch_experiment_arm");
 		const call = r.calls.find((t: any) => t.name === "dispatch_experiment_arm");
@@ -82,8 +86,8 @@ test.describe("@chatbox experiment control plane", () => {
 
 	test("an invented arm is refused BY NAME, not silently run as the baseline", async () => {
 		const r = await ask(
-			"Run the arm called panel_of_seven on the judge_panel_parity experiment " +
-			"on mbb-consultant. Use dispatch_experiment_arm.",
+			"Queue a run of the experiment called panel_of_seven in the judge_panel_parity study " +
+			"on mbb-consultant. Use workflow_run with mode queue.",
 		);
 		const call = r.calls.find((t: any) => t.name === "dispatch_experiment_arm");
 		if (call) {
