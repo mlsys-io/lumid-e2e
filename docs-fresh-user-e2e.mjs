@@ -138,7 +138,7 @@ note("PLAIN USER (non-admin) — the docs index");
   const cards = await page.locator("main a[href^='/studio/docs/']").count();
   console.log(`      cards on the index: ${cards}`);
   check("index: the consolidated set is present",
-    ["Quant Research Onboarding", "Workflows and experiments"].every((t) => txt.includes(t)),
+    ["Quant Research Onboarding", "Workflows and studies"].every((t) => txt.includes(t)),
     txt.slice(0, 200));
   await page.close();
 }
