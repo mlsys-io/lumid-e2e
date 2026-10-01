@@ -266,8 +266,8 @@ async function pythonShots() {
     await page.locator("[data-shot=function]").fill("main");
     const code = page.locator("[data-shot=coderequired], [data-shot=code]").first();
     await code.fill(PY_CODE);
-    // The form validates on blur: leave the field, or the shot shows the
-    // "Code is required" it had before the code was typed.
+    // The node arrives with a starter main(); replace it with the walkthrough's
+    // code. The form validates on blur, so leave the field before the shot.
     await code.evaluate((el) => el.blur());
     await page.getByText("Code is required.").waitFor({ state: "detached", timeout: 10000 });
     await code.scrollIntoViewIfNeeded();
