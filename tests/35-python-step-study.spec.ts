@@ -147,9 +147,8 @@ test.describe("35 — user Python in workflows and studies, as a fresh non-admin
 			id: STUDY,
 			workflow: WORKFLOW,
 			hypothesis: "A larger SCORE_SCALE reports a larger score.",
-			// A study must name its population (dataset_id or cases[]); a compute
-			// graph has no dataset, so the one "case" is the graph's own input.
-			cases: ["fox-and-dog"],
+			// No dataset_id / cases[]: score_graph runs a compute graph, whose runs
+			// are the population (lumid-identity#122, LumidOS#137).
 			metric: { name: "score", higher_is_better: true },
 			experiments: [
 				{ id: "small", env: { SCORE_SCALE: "0.1" } },
