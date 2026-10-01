@@ -206,6 +206,98 @@ await canvasShot("workflow-yaml", FILING, { yaml: true, proof: /Workflow definit
 await canvasShot("workflow-xpio", XPIO, { proof: /xpio loop/i });
 await canvasShot("workflow-flowmesh", FM_DAG, { proof: /FlowMesh/ });
 
+// ── workflows.md §15: a Python step, end to end ──────────────────────
+// Built the way the doc tells the reader to: a one-node FlowMesh graph, then
+// Add → Python (which asks to restructure into spec.graph), the code typed into
+// the form, then Run. The run is REAL — it goes to Research Fleet as the reader —
+// so the result shot is that run's own result, not a fixture.
+const PY_START = `apiVersion: flowmesh/v1
+kind: Workflow
+metadata:
+  name: word-count
+spec:
+  graph:
+    nodes:
+      - name: prepare
+        spec:
+          taskType: echo
+          data:
+            type: list
+            items: [the quick brown fox, jumps over the lazy dog]
+`;
+const PY_CODE = `def main(prepare):
+    words = [len(str(item["output"]).split()) for item in prepare["items"]]
+    return {"metrics": {"mean_words": sum(words) / len(words)}}
+`;
+const PY_SHOTS = ["workflow-python-add", "workflow-python-form", "workflow-python-run", "workflow-python-result"];
+async function pythonShots() {
+  if (only.size && !PY_SHOTS.some((n) => only.has(n))) return;
+  const page = await ctx.reader.newPage();
+  const snap = async (name, loc) => {
+    if (only.size && !only.has(name)) return;
+    await loc.screenshot({ path: `${OUT}/${name}.png` });
+    results.push({ name, ok: true });
+  };
+  let at = "start";
+  try {
+    await page.goto("https://lum.id/studio/workflows/new", { waitUntil: "load", timeout: 90000 });
+    await waitText(page, /Workflow definition/);
+    await loadDoc(page, PY_START);
+    await toCanvas(page);
+    at = "add";
+    await page.getByRole("button", { name: "Add", exact: true }).first().click({ timeout: 10000 });
+    await page.locator("input[placeholder^='Search']").fill("python");
+    await page.getByText("Run your own Python function", { exact: false }).first().waitFor({ timeout: 10000 });
+    await snap("workflow-python-add", canvasCard(page));
+    await page.getByText(/^Python$/).first().click();
+    await page.getByRole("button", { name: /Restructure and add/ }).click({ timeout: 10000 });
+    await page.waitForTimeout(1200);
+    at = "form";
+    await page.locator(".react-flow__node", { hasText: /^python/ }).first().click({ timeout: 10000 });
+    await page.waitForTimeout(800);
+    // Tag each inspector control by its label, so filling does not depend on
+    // the form's nesting.
+    await page.evaluate(() => document.querySelectorAll("label").forEach((l) => {
+      let el = null, p = l.parentElement;
+      for (let k = 0; k < 3 && p && !el; k++) { el = p.querySelector("textarea,input,select"); p = p.parentElement; }
+      if (el) el.setAttribute("data-shot", (l.innerText || "").split("\n")[0].replace(/[^A-Za-z]/g, "").toLowerCase());
+    }));
+    await page.locator("[data-shot=metricsitreports]").fill("mean_words");
+    await page.locator("[data-shot=function]").fill("main");
+    const code = page.locator("[data-shot=coderequired], [data-shot=code]").first();
+    await code.fill(PY_CODE);
+    // The form validates on blur: leave the field, or the shot shows the
+    // "Code is required" it had before the code was typed.
+    await code.evaluate((el) => el.blur());
+    await page.getByText("Code is required.").waitFor({ state: "detached", timeout: 10000 });
+    await code.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(600);
+    await snap("workflow-python-form", canvasCard(page));
+    at = "run";
+    await page.getByRole("button", { name: "Run", exact: true }).first().click();
+    const chip = page.locator("a[href='/studio/research-fleet/jobs']").first();
+    let text = "";
+    for (let i = 0; i < 60 && !/succeeded|failed|canceled/.test(text); i++) {
+      await page.waitForTimeout(3000);
+      text = await chip.innerText().catch(() => "");
+    }
+    if (!/succeeded/.test(text)) throw new Error(`run did not succeed: ${text || "no status"}`);
+    await snap("workflow-python-run", canvasCard(page));
+    at = "result";
+    const jobId = text.split("·").pop().trim();
+    await page.goto("https://lum.id/studio/research-fleet/jobs", { waitUntil: "load", timeout: 90000 });
+    await waitText(page, new RegExp(jobId.replace(/[:.]/g, "\\$&")));
+    await page.locator("tr", { hasText: jobId }).getByText("Result", { exact: true }).click();
+    const panel = page.locator("div.border-t", { hasText: jobId }).last();
+    await panel.getByText(/mean_words/).first().waitFor({ timeout: 20000 });
+    await panel.scrollIntoViewIfNeeded();
+    await snap("workflow-python-result", panel);
+  } catch (e) {
+    results.push({ name: `workflow-python (${at})`, ok: false, why: String(e).slice(0, 200) });
+  } finally { await page.close(); }
+}
+await pythonShots();
+
 // ── lumilake-flowmesh.md (Admin+) ─────────────────────────────────────
 // The demo app is installed on the reader account (not the operator's).
 for (const [name, surface, proof] of [["lumilake-flowmesh-pipeline", "pipeline", /Fifteen raw robot episodes/],
